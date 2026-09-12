@@ -126,11 +126,11 @@ def test_CENSO_todas_las_subclases_de_JournalError_heredan_el_saneado():
                  if isinstance(getattr(C, n), type)
                  and issubclass(getattr(C, n), C.JournalError)
                  and getattr(C, n) is not C.JournalError]
-    # 🔻 33 -> 35 al entrar `AdmissionClosed` y `AdmissionConflict` con la
-    # barrera de admision. DECIDIDO, no relajado: las dos heredan de
-    # `JournalError` y por tanto el saneado, que es lo que este censo mide.
-    assert len(subclases) == 35, (
-        f"la poblacion de subclases es {len(subclases)}, no 35. Si has anadido o "
+    # 35 -> 39: la migración añade MigrationSnapshotRequired; la flota añade
+    # ObservationSequenceConflict, OrganizationConflict y RecoveryConflict.
+    # Las cuatro heredan el saneado. El censo sigue siendo exacto.
+    assert len(subclases) == 39, (
+        f"la poblacion de subclases es {len(subclases)}, no 39. Si has anadido o "
         f"quitado una, DECIDE y actualiza este numero — un censo con un `>=` no "
         f"ve salir a nadie, y salir de la jerarquia es perder el saneado")
     for cls in subclases:
@@ -457,8 +457,10 @@ def test_VE_la_clase_NO_ha_cambiado():
     # cablean. Cambiarlos obliga a venir aqui y DECIDIR, que es el punto.
     # 🔻 33 -> 35: `AdmissionClosed` + `AdmissionConflict`, ambas con su fila en
     # `REASON_CODES` y en `_POR_MOTIVO`, que es lo que D10/D11 exigen.
-    assert n == 35, f"la taxonomia se movio a {n}: D10/D11 dependen de ese numero"
-    assert len(C.Journal._POR_MOTIVO) == 24 and len(C.REASON_CODES) == 26
+    # MigrationSnapshotRequired es de ciclo de vida, sin motivo de rechazo.
+    # Los tres conflictos de flota añaden clase, motivo y código cada uno.
+    assert n == 39, f"la taxonomia se movio a {n}: revisa las familias declaradas"
+    assert len(C.Journal._POR_MOTIVO) == 27 and len(C.REASON_CODES) == 29
 
 
 def test_EQUIVALENCIA_DECLARADA_el_congelado_del_motivo_no_tiene_falsador_hoy():

@@ -2160,7 +2160,7 @@ def _table_sql_from_schema(table: str) -> str:
         normalized = _sql_forma(statement)
         if normalized.startswith(prefix):
             return normalized
-    raise RuntimeError(f"SCHEMA no contiene CREATE TABLE de {table}")
+    raise RuntimeError(_saneado(f"SCHEMA no contiene CREATE TABLE de {table}"))
 
 
 _OBJETOS_V3 = {
