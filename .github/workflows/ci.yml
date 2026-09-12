@@ -1,0 +1,404 @@
+# Gate FUERA del proceso del agente.
+#
+# Todo lo que este repo comprueba —cadena de custodia, integridad, contraste— lo
+# comprobaba hasta ahora el mismo proceso que escribía el código. Un agente que
+# narra su propio veredicto no es una comprobación. Esto corre en la máquina de
+# otro, sobre lo que de verdad está en la rama.
+name: CI
+
+on:
+  push: { branches: [main] }
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  humo:
+    name: Prueba de humo (cada propiedad con su falsador)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Construir la imagen
+        run: docker build -t llminbox:test .
+      # ANTES del humo, y a propósito: si las guardas del arnés no saben decir que no,
+      # lo que diga el humo a continuación no vale nada. Ocho de sus puertas estuvieron
+      # dos días en verde sobre algo que no ocurría. Tarda <1 min y no levanta servicio.
+      - name: Las guardas del arnés saben decir que no
+        run: IMAGEN=llminbox:test ./tests/guardas.sh
+      - name: Y ninguna se puede romper sin que se note
+        run: IMAGEN=llminbox:test ./tests/mutantes-arnes.sh
+      # La puerta de PUBLICAR. Va aquí y no en el humo porque no necesita servicio —
+      # ése es justo su contrato: `cat >>` gana porque nunca falla, así que una
+      # publicación que dependa del contenedor se abandona el primer día que no esté.
+      - name: Publicar valida antes de escribir (y sin servicio)
+        run: ./tests/publicar.sh
+      - name: Correr el humo
+        run: IMAGEN=llminbox:test ./tests/humo.sh
+
+  pytest:
+    name: pytest (fail-closed, migración, carril, CLI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        # HISTORIA COMPLETA, y no es preferencia: `actions/checkout` es SHALLOW por
+        # defecto (`fetch-depth: 1`), y el arnés del piloto compara contra el SHA de
+        # su base para probar que no toca el compose de la flota. En un clon shallow
+        # ese objeto NO EXISTE ⇒ el paso `pytest tests/pilot` rompería el build por
+        # algo que no es el piloto, y la reacción natural a un build rojo es aflojar
+        # el test — devolviéndolo a decorado. Medido por @security con los dos brazos.
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        # Misma minor que el Dockerfile (python:3.13-slim): un test contra otro
+        # intérprete no prueba producción, igual que ya vale para las versiones
+        # de fastapi/pydantic de abajo.
+        with: { python-version: "3.13" }
+      # LAS DOS LISTAS TAMBIÉN AQUÍ, y el motivo es el paso de MUTANTES de abajo:
+      # `mutantes_canon.py` muta el código y vuelve a correr la suite, así que necesita
+      # exactamente el mismo entorno que ella. Con sólo `requirements-test.txt`, todo
+      # mutante que tocara `observability.py` moría por `ImportError` —no por el
+      # falsador— y el paso decía «mutante muerto» sobre un arnés que ni se ejecutó.
+      - name: Instalar dependencias de test (mismas versiones que el Dockerfile)
+        run: |
+          pip install -r requirements-test.txt
+          pip install -r requirements-otel.txt
+      # Cada dominio tiene su propio arnés. Los dos órdenes son deliberados: una
+      # sola secuencia podría seguir verde si el último ``conftest`` cargado fuera
+      # casualmente el que esperan los imports globales.
+      - name: Los seis dominios se recogen juntos sin colisionar sus arneses
+        run: |
+          python3 -m pytest --collect-only -q \
+            tests/journal tests/search tests/projector tests/runtime tests/native_gateway tests/pytest
+          python3 -m pytest --collect-only -q \
+            tests/pytest tests/native_gateway tests/runtime tests/projector tests/search tests/journal
+      - name: El journal de coordinación (stdlib-only, sin fastapi)
+        # El Core no queda cubierto por ejecutar sólo tests/pytest. Esta base debe
+        # estar verde antes de medir si sus falsadores discriminan.
+        run: python3 -m pytest tests/journal -v
+      - name: Los mutantes del journal (A1/A6/A7, los 3 P1, sesión y scope)
+        # Este arnés muta coordination.py; mutantes_canon.py no cubre ese sujeto.
+        run: python3 tests/mutantes_native_core.py
+      - name: Los falsadores M1 del journal
+        run: python3 tests/mutantes_m1.py
+      - name: El proyector materializa el ledger sin perder causalidad
+        # Recogerlo no era ejecutarlo: hasta ahora este dominio no tenia ningun
+        # llamador en CI y podia romperse con la puerta general todavia verde.
+        run: python3 -m pytest tests/projector -v
+      # M3 SE IGNORA AQUÍ, Y SE CORRE UNA SOLA VEZ EN SU JOB DEDICADO.
+      #
+      # `test_m3_observability.py` importa el SDK DURO, sin `importorskip`, y eso es
+      # deliberado: un `skip` dejaba el gate de M3 en verde sin ejecutar un solo caso
+      # contra OTel real. Pero entonces este job —que recoge `tests/pytest` entero—
+      # tumbaba la rama en un runner limpio aunque `m3-sensores` estuviera verde: dos
+      # jobs discrepando sobre el mismo commit, y el rojo llegando por el sitio que no
+      # es. Se ignora aquí en vez de ablandar el import: el import duro ES el gate.
+      #
+      # Y se ignora en vez de simplemente dejarlo correr dos veces porque `m3-sensores`
+      # lo corre con `--noconftest` y warnings en ERROR; correrlo aquí también, con
+      # otra configuración, produciría dos veredictos distintos sobre el mismo fichero.
+      - name: Correr la suite (M3 va en su job dedicado)
+        run: python3 -m pytest tests/pytest -v --ignore=tests/pytest/test_m3_observability.py
+      - name: Los mutantes que tienen que morir
+        # La suite comprueba el CÓDIGO; esto comprueba a los TESTS. Un falsador que
+        # deja de discriminar sigue VERDE, y ése es el estado que produce un arnés
+        # capaz de certificar cualquier cosa. Si un mutante sobrevive, el roto es el
+        # falsador, no el código.
+        run: python3 tests/mutantes_canon.py
+
+  gateway-nativo:
+    name: Gateway nativo (contrato wire y techo de transporte)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.13" }
+      - name: Instalar dependencias de test
+        run: pip install -r requirements-test.txt
+      # Job propio a proposito: si tests/pytest falla antes en su job, este
+      # veredicto sigue existiendo y no se confunde ausencia con exito.
+      - name: Contrato HTTP, autenticacion y limite del cuerpo real
+        run: python3 -m pytest tests/native_gateway -v
+      - name: El composition root ensambla y posee el ciclo de vida
+        run: python3 -m pytest tests/runtime -v
+      - name: Search y Journal sobreviven al fallo del otro en la composición real
+        run: python3 tests/search/falsificador_native_lifecycle_v3.py
+      - name: El CLI nativo distingue respuestas, replays y fallos incompletos
+        run: bash tests/nativo.sh
+      - name: El E2E discrimina gateway ausente, roto y conforme
+        run: bash tests/e2e-falsadores.sh
+      - name: Los falsadores del techo de transporte discriminan
+        run: python3 tests/native_gateway/mutantes.py
+
+  fleet:
+    name: Flota · adaptador, proyección y concurrencia
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.13" }
+      - name: Instalar runtime fijado y dependencias de test
+        # El lock activa --require-hashes; los requisitos de test van aparte.
+        run: |
+          pip install -r requirements.lock
+          pip install -r requirements-test.txt -r requirements-otel.txt
+      - name: Ejecutar los dominios de flota que faltaban en CI
+        run: python3 -m pytest tests/adapter tests/scale -v
+
+  busqueda:
+    name: M2 · búsqueda y falsadores (sin Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        # Misma minor que la imagen. La disponibilidad real de FTS5 en este SQLite
+        # forma parte del gate: search_store falla cerrado si no está compilado.
+        with: { python-version: "3.13" }
+      - name: Instalar dependencias de test
+        run: pip install -r requirements-test.txt
+      - name: Ejecutar la suite M2 (no sólo recogerla)
+        run: python3 -m pytest tests/search -q
+      - name: Ejecutar el censo canónico de mutantes M2
+        run: python3 tests/search/mutantes_m2.py
+      - name: Afirmar positivamente la evidencia de mutantes
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import runpy
+          from pathlib import Path
+
+          ruta = Path("tests/search/.mutantes_m2.json")
+          if not ruta.is_file():
+              raise SystemExit("GATE M2 EN ROJO: el runner no publicó evidencia canónica")
+          evidencia = json.loads(ruta.read_text(encoding="utf-8"))
+          catalogo = runpy.run_path("tests/search/mutantes_m2.py")
+          esperados_lista = [m[0].split()[0] for m in catalogo["MUTANTES"]]
+          esperados = set(esperados_lista)
+          resultados = evidencia.get("resultados")
+          seleccion = evidencia.get("seleccion")
+          censo = evidencia.get("censo_total")
+          total = evidencia.get("total")
+          errores = []
+          if len(esperados) != len(esperados_lista):
+              errores.append("catálogo MUTANTES contiene ids duplicados")
+          if evidencia.get("estado_corrida") != "COMPLETA":
+              errores.append(f"estado={evidencia.get('estado_corrida')!r}")
+          if evidencia.get("canonica") is not True:
+              errores.append(f"canonica={evidencia.get('canonica')!r}")
+          if evidencia.get("seleccion_parcial") is not False:
+              errores.append(
+                  f"seleccion_parcial={evidencia.get('seleccion_parcial')!r}")
+          if censo != len(esperados) or total != len(esperados):
+              errores.append(
+                  f"total/censo={total!r}/{censo!r}, esperado={len(esperados)}")
+          if not isinstance(seleccion, list) or seleccion != sorted(esperados):
+              errores.append("seleccion no es el set exacto y único del catálogo")
+          if not isinstance(resultados, dict) or set(resultados) != esperados:
+              recibidos = sorted(resultados) if isinstance(resultados, dict) else resultados
+              errores.append(f"resultados no son el set exacto: {recibidos!r}")
+              no_muertos = []
+          else:
+              no_muertos = sorted(
+                  clave for clave, resultado in resultados.items()
+                  if not isinstance(resultado, dict)
+                  or resultado.get("veredicto") != "MUERTO"
+              )
+          if no_muertos:
+              errores.append(f"no_muertos={no_muertos}")
+          if evidencia.get("resumen") != {"MUERTO": censo}:
+              errores.append(f"resumen={evidencia.get('resumen')!r}")
+          github_sha = os.environ.get("GITHUB_SHA")
+          sujeto = evidencia.get("sujeto")
+          if not github_sha or not isinstance(sujeto, dict) or sujeto.get("head") != github_sha:
+              observado = sujeto.get("head") if isinstance(sujeto, dict) else sujeto
+              errores.append(f"sujeto.head={observado!r} != GITHUB_SHA={github_sha!r}")
+          if errores:
+              raise SystemExit("GATE M2 EN ROJO: " + " · ".join(errores))
+          print(f"GATE M2 EN VERDE: {censo} mutantes medidos y muertos; corrida canónica")
+          PY
+
+  m3-sensores:
+    name: M3 · sensores contra el SDK REAL (cero skips)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.13" }
+      # LAS DOS LISTAS, Y LA SEGUNDA NO ES OPCIONAL AQUÍ. Un job que instalara sólo
+      # `requirements-test.txt` se saltaba la integración ENTERA con el SDK y salía
+      # VERDE: acreditaba «M3 pasa» sin ejecutar un solo caso contra OTel real.
+      # `requirements-otel.txt` es extra de RUNTIME y obligatorio en ESTE gate.
+      - name: Instalar dependencias, incluido el extra de OTel
+        run: |
+          pip install -r requirements-test.txt
+          pip install -r requirements-otel.txt
+      # LAS VERSIONES SE IMPRIMEN. `_tiene_salida` mira atributos internos del SDK y
+      # ésos se han movido entre menores (1.38: `_sdk_config.metric_readers`;
+      # 1.44: `_metric_readers`). Saber contra qué se midió es parte del resultado.
+      - name: Versiones exactas contra las que se mide
+        run: |
+          python3 -c "import sys,importlib.metadata as m; print('python', sys.version.split()[0]); [print(p, m.version(p)) for p in ('opentelemetry-api','opentelemetry-sdk','opentelemetry-semantic-conventions','pytest')]"
+      # DOS PASADAS, Y CADA UNA MIDE UNA COSA DISTINTA.
+      #
+      # ① ACREDITADORA, con warnings en ERROR y `--noconftest`. Lo segundo no es un
+      #    truco para esquivar avisos: el `conftest` compartido importa el
+      #    TestClient de starlette AL COLECTAR, y anyio emite ahí su propia
+      #    `DeprecationWarning` — ajena a este módulo y ANTES de que pytest instale
+      #    los filtros `-W`, así que ningún filtro la alcanza. Este fichero sólo
+      #    usa fixtures de serie, así que sin conftest mide exactamente su camino.
+      #    Cambiar la dependencia ajena para que el flag pase habría sido tocar a
+      #    ciegas algo que no estamos auditando.
+      # ② DE REPORTE, normal. Los avisos de terceros SIGUEN SALIENDO aquí: no se
+      #    ocultan, sólo no deciden el veredicto de M3.
+      - name: Suite focal de M3 · acreditadora (warnings en error, cero skips)
+        run: |
+          python3 -m pytest tests/pytest/test_m3_observability.py -v --noconftest \
+            -W error::DeprecationWarning -W error::UserWarning --junit-xml=m3.xml
+      - name: Suite focal de M3 · reporte (avisos de terceros a la vista)
+        run: python3 -m pytest tests/pytest/test_m3_observability.py -q -rw
+      # UN SKIP AQUÍ ES UN FALLO. Es la avería que motivó este job: el salto
+      # silencioso es la forma más barata de que un gate certifique cualquier cosa.
+      # Y el fichero importa el SDK DURO —sin `importorskip`—, así que un skip sólo
+      # puede venir de alguien desactivando un caso a mano.
+      - name: Cero skips y cero errores
+        run: |
+          python3 - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          r = ET.parse("m3.xml").getroot()
+          s = r if r.tag == "testsuite" else r.find("testsuite")
+          n, sk, fa, er = (int(s.get(k, 0)) for k in ("tests", "skipped", "failures", "errors"))
+          print(f"tests={n} skipped={sk} failures={fa} errors={er}")
+          if sk or fa or er or n == 0:
+              sys.exit(f"GATE M3 EN ROJO: {sk} skips, {fa} fallos, {er} errores, {n} casos")
+          PY
+
+  interfaz:
+    name: La interfaz compila con TypeScript estricto
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: web } }
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        # La acción busca `packageManager` en el package.json de la RAÍZ del repo, y
+        # el nuestro vive en `web/`; `working-directory` no cambia dónde mira. Se pasa
+        # la versión explícita, y tiene que coincidir con la de web/package.json.
+        with: { version: 10.33.2 }
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with: { node-version: 24, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
+      # --frozen-lockfile a propósito: si alguien cambia package.json sin regenerar
+      # el lockfile, esto falla aquí en vez de dar una imagen distinta a la probada.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # `titular.test.mjs` EXISTÍA Y NO LO CORRÍA NADIE. Once casos verdes —el sello UTC
+      # verdadero, la fecha imposible que no puede decir «Invalid Date», el `-57d` que no
+      # aparece— escritos como falsador de una regresión REAL (un `new Date()` suelto en
+      # Detalle.tsx) y sin un solo llamador: ni aquí, ni en package.json, ni en ningún
+      # script. `pnpm build` corre `tsc && vite`, que no ejecutan un `.mjs` que nadie
+      # importa. Un falsador que no se ejecuta no distingue el código sano del roto.
+      - run: pnpm test
+
+  higiene:
+    name: Sin secretos ni rutas personales en lo publicable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: La cobertura de publicación incluye el tarball y respeta export-ignore
+        run: python3 -m unittest discover -s tests -p 'test_higiene_superficie.py' -v
+      - name: El tarball no publica ficheros fuera del manifiesto
+        run: bash tools/tarball-vs-manifiesto.sh HEAD
+      - name: Barrer el árbol publicado
+        run: python3 tools/higiene.py
+      - name: Los enlaces relativos de la documentación resuelven
+        run: python3 tools/higiene.py --links
+      - name: Los estados declarados coinciden con lo que hay en el árbol
+        run: python3 tools/estado-garantias.py
+
+  # El piloto va en su propio job para que su veredicto no desaparezca si falla un
+  # dominio anterior y para validar los manifests con Docker Compose real.
+  pilot-m1:
+    name: piloto M1 (topología, preflight, estreno)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        # Historia completa: el arnés audita por commit que un lote piloto no mezcle
+        # sus manifests con Dockerfile o el compose global.
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.13" }
+      - name: Dependencias de test
+        run: pip install -r requirements-test.txt
+      - name: Topología y preflight del piloto M1
+        run: python3 -m pytest tests/pilot -v
+      # Y el compose se valida COMO COMPOSE, no como diccionario. `verificar()` mide
+      # el YAML parseado; que Docker lo acepte —interpolación, claves válidas,
+      # servicios resolubles— sólo lo dice `config`. El `--env-file` es de valores
+      # FALSOS a propósito: sin él, los `:?` dejan este comando en rc=1 y por eso
+      # no lo invocaba ningún gate.
+      - name: El compose del piloto es un compose válido
+        run: docker compose -f docker-compose.pilot.yml --env-file tests/pilot/env.example config -q
+      # El estreno NO se corre aparte: sus pruebas ya están dentro de `tests/pilot`
+      # y volver a lanzarlas con `-k estreno` era ejecutar un SUBCONJUNTO de lo que
+      # acaba de pasar — mismos casos, mismo veredicto, más minutos y una segunda
+      # cosa que mantener sincronizada. Lo que sí necesita paso propio es su
+      # COMPOSE, que ningún test parsea.
+      - name: El compose del estreno es un compose válido
+        run: docker compose -f docker-compose.pilot-estreno.yml --env-file tests/pilot/env.example config -q
+
+  gates-oss:
+    name: Los gates OSS saben decir que no
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Qué recibe de verdad el daemon al construir
+        run: ./tests/contexto-build.sh
+      - name: El gate de artefacto rechaza lo que tiene que rechazar
+        run: ./tests/gates-oss.sh
+      - name: La cadena de build está fijada y el healthcheck mira el cuerpo
+        run: ./tests/release-static.sh
+
+  release-reproducible:
+    name: Dos builds independientes y evidencia estructural sin publicar
+    runs-on: ubuntu-latest
+    needs: [gates-oss]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Construir dos veces, comparar bytes y generar SBOM/provenance
+        run: ./tools/build-release.sh
+
+  dco:
+    name: Cada commit certifica su procedencia (DCO)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { fetch-depth: 0 }
+      - name: Signed-off-by en todos los commits del PR
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          malos=0
+          while read -r sha; do
+            [ -z "$sha" ] && continue
+            if ! git log -1 --format='%B' "$sha" | grep -qiE '^Signed-off-by: .+ <.+@.+>'; then
+              echo "::error::$(git log -1 --format='%h %s' "$sha") - falta Signed-off-by"
+              malos=$((malos+1))
+            fi
+          done <<< "$(git rev-list "$base".."$head")"
+          # El DCO dejo de ser el MECANISMO el 2026-09-11: lo sustituye el CLA (ver
+          # CONTRIBUTING.md y CLA.md). Este job NO gatea: un gate que aprueba con el
+          # mecanismo RETIRADO es peor que no tenerlo. Informa, y nada mas.
+          # ⛔ Y NO lo sustituye el chequeo del CLA, que aun no existe: cuando exista,
+          # ESE sera el que gatee, y esta seccion se borra entera.
+          if [ "$malos" -gt 0 ]; then
+            echo "::notice::$malos commit(s) sin Signed-off-by. El DCO ya no es el mecanismo:"
+            echo "::notice::la firma que cuenta es el CLA (CONTRIBUTING.md). Esto NO bloquea."
+          else
+            echo "todos los commits del PR llevan Signed-off-by (informativo, ya no gatea)"
+          fi

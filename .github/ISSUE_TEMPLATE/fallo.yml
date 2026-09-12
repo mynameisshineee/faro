@@ -1,0 +1,32 @@
+name: Bug report
+description: Something behaves differently than documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: run `docker build -t llminbox:test . && IMAGEN=llminbox:test ./tests/humo.sh`.
+        If a smoke check fails, paste which one — that alone usually locates the problem.
+  - type: textarea
+    id: que-paso
+    attributes:
+      label: What happened
+      description: The literal command and the literal output. Not a summary.
+      render: shell
+    validations: { required: true }
+  - type: textarea
+    id: que-esperabas
+    attributes:
+      label: What you expected, and where you read it
+      description: Quote the README, PROTOCOL.md or a comment. If the docs are wrong, that is the bug.
+    validations: { required: true }
+  - type: input
+    id: humo
+    attributes:
+      label: Smoke test result
+      placeholder: "e.g. all green / 'el GET no consume' failed"
+  - type: input
+    id: entorno
+    attributes:
+      label: OS and Docker version
+      placeholder: "macOS 15 · Docker Desktop 4.79"

@@ -1,0 +1,77 @@
+{
+  "_comentario": [
+    "CENSO — quién escribe en tus ledgers y bajo qué nombre. Es DATO, no código.",
+    "Sin él, el troceador no reconoce a NADIE (ver PROTOCOL.md §6): con censo",
+    "vacío el patrón de coincidencia está construido para no casar nunca, no",
+    "para adivinar por parecido.",
+    "",
+    "Copia este fichero a `roster.json` (que git ignora) y pon los tuyos:",
+    "  cp roster.example.json roster.json",
+    "  # y edita 'agentes'/'humanos'/'difusion' a mano con tus nombres reales.",
+    "(No existe todavía un comando que lo genere solo a partir de lo ya escrito",
+    "en tus ledgers — si lo hubiera, iría aquí; hoy es edición manual.)",
+    "",
+    "`humano` es quien responde de lo que escriba ese agente. Hoy NO se verifica: un token",
+    "por persona no distingue a sus agentes entre sí. El campo `clave` está ahí para que,",
+    "el día que necesites firma por agente, no haya que rehacer el formato ni reindexar —",
+    "ver PROTOCOL.md §7, que documenta explícitamente que hoy nada la comprueba.",
+    "",
+    "`difusion` son destinos que no son nadie en concreto (equipo, todos): sirven para que",
+    "una entrada dirigida a todo el mundo se cuente aparte de 'a esta persona en concreto'",
+    "(campo `to`) en vez de mezclada con ella — ver PROTOCOL.md §3.3.",
+    "",
+    "Estos cuatro nombres son los MISMOS que usa el ledger de ejemplo que crea",
+    "`llmi init`. Tienen que coincidir: el troceador solo reconoce a quien esté",
+    "censado aquí, así que un demo con nombres ajenos al censo produce 48 entradas",
+    "perfectamente formadas y una bandeja VACÍA — el peor primer contacto posible."
+  ],
+  "agentes": [
+    {
+      "nombre": "alice-backend",
+      "humano": "alice",
+      "clave": ""
+    },
+    {
+      "nombre": "alice-frontend",
+      "humano": "alice",
+      "clave": ""
+    },
+    {
+      "nombre": "bob-reviewer",
+      "humano": "bob",
+      "clave": ""
+    },
+    {
+      "nombre": "bob-research",
+      "humano": "bob",
+      "clave": ""
+    },
+    {
+      "nombre": "destilador",
+      "humano": "alice",
+      "clave": "",
+      "escucha": [
+        "wiki-vault"
+      ],
+      "_nota": "Ejemplo del campo `escucha` (PROTOCOL.md 6.1): recibe tambien lo dirigido a wiki-vault, pero con cursor PROPIO. Leerlo aqui no le vacia la bandeja a quien responde como wiki-vault."
+    }
+  ],
+  "humanos": [
+    {
+      "nombre": "alice",
+      "alias": [
+        "Alice"
+      ]
+    },
+    {
+      "nombre": "bob",
+      "alias": [
+        "Bob"
+      ]
+    }
+  ],
+  "difusion": [
+    "equipo",
+    "todos"
+  ]
+}
