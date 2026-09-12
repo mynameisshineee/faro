@@ -57,13 +57,12 @@ jobs:
         # intérprete no prueba producción, igual que ya vale para las versiones
         # de fastapi/pydantic de abajo.
         with: { python-version: "3.13" }
-      # LAS DOS LISTAS TAMBIÉN AQUÍ, y el motivo es el paso de MUTANTES de abajo:
-      # `mutantes_canon.py` muta el código y vuelve a correr la suite, así que necesita
-      # exactamente el mismo entorno que ella. Con sólo `requirements-test.txt`, todo
-      # mutante que tocara `observability.py` moría por `ImportError` —no por el
-      # falsador— y el paso decía «mutante muerto» sobre un arnés que ni se ejecutó.
-      - name: Instalar dependencias de test (mismas versiones que el Dockerfile)
+      # El runtime fijado incluye uvicorn para las pruebas con socket real.
+      # Instalar el lock por separado: activa --require-hashes, mientras los
+      # requisitos de test y OTel son listas sin hashes.
+      - name: Instalar runtime fijado y dependencias de test
         run: |
+          pip install -r requirements.lock
           pip install -r requirements-test.txt
           pip install -r requirements-otel.txt
       # Cada dominio tiene su propio arnés. Los dos órdenes son deliberados: una
@@ -116,8 +115,10 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: { python-version: "3.13" }
-      - name: Instalar dependencias de test
-        run: pip install -r requirements-test.txt
+      - name: Instalar runtime fijado y dependencias de test
+        run: |
+          pip install -r requirements.lock
+          pip install -r requirements-test.txt
       # Job propio a proposito: si tests/pytest falla antes en su job, este
       # veredicto sigue existiendo y no se confunde ausencia con exito.
       - name: Contrato HTTP, autenticacion y limite del cuerpo real
