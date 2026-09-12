@@ -110,6 +110,15 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 # mitad del rollback que el código puede garantizar por sí solo.
 DURABLE_V = 7
 
+# Modos de apertura de `Journal.initialize` (ADR-002 D6 · entrada de operador G8).
+# El defecto de la casa es el ESTANDAR: crea si falta y migra si v6, como siempre.
+# `SOLO_EXISTENTE_V7` es la restricción del ACTIVADOR de organización: se aplica
+# DENTRO de la decisión que gobierna el cambio (bajo `_cerrojo_ciclo`, sobre la
+# clasificación recién fotografiada), no en una lectura previa del llamante —
+# la misma brecha que el llamante no puede cerrar por fuera.
+OPEN_MODE_ESTANDAR = "estandar"
+OPEN_MODE_SOLO_EXISTENTE_V7 = "solo_existente_v7"
+
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
 DEFAULT_SESSION_TTL_S = 900
 MAX_OUTBOX_LEASE_S = 3_600
@@ -548,6 +557,17 @@ class JournalReadOnly(JournalError):
     Existe como error propio y no como un `OperationalError` suelto porque el
     ADR pide una respuesta distinguible (`JOURNAL_READ_ONLY`) en vez de un bucle
     de reinicio: este repo ya tumbó el bus 11 veces por negarse a arrancar.
+    """
+
+
+class OpenModeRestricted(JournalError):
+    """`initialize` con `open_mode=SOLO_EXISTENTE_V7` y la base no está en v7.
+
+    Se levanta en la comprobación que REALMENTE gobierna el cambio — dentro del
+    cerrojo de ciclo de vida, tras re-fotografiar y re-clasificar, y ANTES de la
+    retención de la instantánea v6 o de `_crear_crash_safe` —: rechazar aquí es
+    rechazar sin haber tocado nada. El valor por defecto de todos los demás
+    llamantes no cambia (ADR-002 D6 · MARK:codex-g8-politica-de-apertura-atomica).
     """
 
 
@@ -3845,9 +3865,15 @@ class Journal:
                  sensor_factory=None,
                  recipient_resolver: "Callable[[str], tuple[str | None, bool]] | None" = None,
                  grammar: "Grammar | None" = None,
+                 open_mode: str = OPEN_MODE_ESTANDAR,
                  clock=time.time):
         if not pepper:
             raise ValueError("pepper obligatorio: sin él `credential_ref` no es opaco")
+        if open_mode not in (OPEN_MODE_ESTANDAR, OPEN_MODE_SOLO_EXISTENTE_V7):
+            raise ValueError(
+                "open_mode desconocido: valores admitidos 'estandar' y "
+                "'solo_existente_v7'")
+        self._open_mode = open_mode
         self.path = path
         self._pepper = pepper.encode() if isinstance(pepper, str) else pepper
         self._busy_timeout_ms = int(busy_timeout_ms)
@@ -4988,6 +5014,15 @@ class Journal:
             if clase == "indeterminada":
                 raise SchemaIndeterminate(detalle)
             if clase == "nueva":
+                # `SOLO_EXISTENTE_V7` corta AQUÍ la rama de creación: la
+                # clasificación "nueva" puede envejecer, pero crear sólo es
+                # legítimo si el modo lo permite; el re-clasificado de debajo
+                # es para el modo estándar, que conserva su camino intacto.
+                if self._open_mode != OPEN_MODE_ESTANDAR:
+                    raise OpenModeRestricted(
+                        "modo de apertura 'solo_existente_v7': no hay base en "
+                        f"{self.path} y este modo no crea — arrancar o migrar "
+                        "es la operación deliberada del canon v7")
                 with self._cerrojo_ciclo():
                     if _stat_seguro(self.path) is None:
                         v = self._crear_crash_safe()
@@ -5121,6 +5156,23 @@ class Journal:
                 self._pepper_de(con)
                 fila = con.execute("SELECT v FROM meta WHERE k='durable_v'").fetchone()
                 existing = int(fila["v"]) if fila else None
+            # 🔒 LA DECISIÓN QUE GOBERNA EL CAMBIO (modo SOLO_EXISTENTE_V7).
+            #    Éste es el punto: foto nueva, clasificación fresca y cerrojo de
+            #    ciclo de vida en la mano — lo que `existing` dice AQUÍ es lo que
+            #    se migra o no AQUÍ. Corta ANTES de la retención de la
+            #    instantánea v6 (`_retain_pre_v7_snapshot_locked` escribe) y
+            #    antes de `_inicializar_dentro` (migra): rechazar después de
+            #    tocar no es rechazar. La lectura previa del llamante
+            #    (`stored_durable_v`) queda como cortesía de fallo rápido; la
+            #    garantía vive aquí, bajo el mismo cierre que `initialize`.
+            if (existing != DURABLE_V
+                    and self._open_mode == OPEN_MODE_SOLO_EXISTENTE_V7):
+                raise OpenModeRestricted(
+                    "modo de apertura 'solo_existente_v7': la base declara "
+                    f"durable_v={existing} y abrir con initialize() "
+                    f"{'MIGRARÍA 6→' + str(DURABLE_V) if existing == 6 else 'no sabe si crearía o migraría'}"
+                    " — eso es la operación deliberada de "
+                    "docs/V1.0-SCHEMA-V7-MIGRATION, no un efecto de activar")
             if existing not in (6, DURABLE_V):
                 raise MigrationFailed(
                     "el contrato beta sólo admite creación nueva, v6→v7 o v7; "
