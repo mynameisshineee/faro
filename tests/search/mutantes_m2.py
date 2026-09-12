@@ -130,8 +130,10 @@ MUTANTES: list[tuple[str, str, str, str]] = [
     ("M30 ventana con hasta inclusivo", S,
      "   AND (? IS NULL OR e.ts    < ?)\n", "   AND (? IS NULL OR e.ts   <= ?)\n"),
     ("M06 integrity-check sin rank=1", S,
-     "\"INSERT INTO search_fts(search_fts, rank) VALUES('integrity-check', 1)\")",
-     "\"INSERT INTO search_fts(search_fts) VALUES('integrity-check')\")"),
+     "            self.con.execute(\n"
+     "                \"INSERT INTO search_fts(search_fts, rank) VALUES('integrity-check', 1)\")",
+     "            self.con.execute(\n"
+     "                \"INSERT INTO search_fts(search_fts) VALUES('integrity-check')\")"),
     ("M07 rid sin AUTOINCREMENT", S, "rid    INTEGER PRIMARY KEY AUTOINCREMENT",
      "rid    INTEGER PRIMARY KEY"),
     ("M27 borrar el mapeo al borrar", S,
@@ -140,7 +142,11 @@ MUTANTES: list[tuple[str, str, str, str]] = [
      " WHERE ledger = old.ledger AND eid = old.eid;\nEND;\n\nCREATE TRIGGER IF NOT EXISTS search_au_body"),
     ("M40 vista sin la UDF", S, "SELECT d.rid AS rowid, llminbox_proyecta(e.body) AS body",
      "SELECT d.rid AS rowid, e.body AS body"),
-    ("M44 readiness sin huellas", S, "            if distintos:", "            if False:"),
+    ("M44 readiness sin huellas", S,
+     "                    if distintos:\n"
+     "                        problemas.append(\"huella distinta en: \" + \", \".join(distintos))",
+     "                    if False:\n"
+     "                        problemas.append(\"huella distinta en: \" + \", \".join(distintos))"),
     ("M46 readiness sin normalizador", S,
      "        if norma is not None and norma != sc.normalizer_fingerprint():",
      "        if False:"),
@@ -212,8 +218,8 @@ MUTANTES: list[tuple[str, str, str, str]] = [
     ("M10 readiness ignora rebuild viejo", S,
      'problemas.append(f"schema_v={v} < {SEARCH_SCHEMA_V} (rebuild viejo)")', "pass"),
     ("M45 readiness sin generacion", S,
-     '        if gen is None:\n            problemas.append("sin generación sellada")',
-     '        if False:\n            problemas.append("sin generación sellada")'),
+     '        if gen is None:\n            return "sin generación sellada"',
+     '        if False:\n            return "sin generación sellada"'),
     ("M21 fusible desactivado", S,
      '                estado["disparado"] = True\n                return 1',
      "                return 0"),
@@ -250,7 +256,8 @@ MUTANTES: list[tuple[str, str, str, str]] = [
     ("M61 readiness sin comparar DDL", S,
      "        problemas.extend(self._desajustes_ddl())", "        problemas.extend([])"),
     ("M62 DDL solo en una direccion", S,
-     '        for nombre in sorted(set(esperado) - set(vivo)):\n            problemas.append(f"falta {nombre}")',
+     '        for identidad in sorted(set(esperado) - set(vivo)):\n'
+     '            problemas.append(f"falta {_etiqueta_objeto(identidad)}")',
      "        pass"),
     ("M63 huellas: parseo no fail-closed", S,
      "            if not isinstance(esperadas, dict) or not esperadas:", "            if False:"),
@@ -330,8 +337,12 @@ MUTANTES: list[tuple[str, str, str, str]] = [
      "WHEN 1 BEGIN"),
     # ── M2-9: storage durable, migración cerrada y FTS antes del rebuild ─────────
     ("M87 schema_v acepta BLOB con bytes numericos", S,
-     '        if storage != "text":\n            raise SearchSchemaCorrupt(',
-     '        if False:\n            raise SearchSchemaCorrupt('),
+     '        if storage != "text":\n'
+     '            raise clase(\n'
+     '                f"{k} corrupto: storage class {storage!r}, se esperaba \'text\'")',
+     '        if False:\n'
+     '            raise clase(\n'
+     '                f"{k} corrupto: storage class {storage!r}, se esperaba \'text\'")'),
     ("M88 cualquier OperationalError parece tabla ausente", S,
      '        return str(e) == "no such table: search_state"',
      "        return True"),
@@ -346,9 +357,11 @@ MUTANTES: list[tuple[str, str, str, str]] = [
      "            if version != SEARCH_SCHEMA_V1:", "            if False:"),
     ("M91 migracion no compara cuerpos DDL v1", S,
      "            if distintos:\n                raise SearchMigrationRejected(\n"
-     '                    "DDL v1 desconocido; cuerpo distinto en: " + ", ".join(distintos))',
+     "                    \"DDL v1 desconocido; cuerpo distinto en: \"\n"
+     "                    + \", \".join(_etiqueta_objeto(i) for i in distintos))",
      "            if False:\n                raise SearchMigrationRejected(\n"
-     '                    "DDL v1 desconocido; cuerpo distinto en: " + ", ".join(distintos))'),
+     "                    \"DDL v1 desconocido; cuerpo distinto en: \"\n"
+     "                    + \", \".join(_etiqueta_objeto(i) for i in distintos))"),
     ("M92 migracion no exige huellas v1", S,
      "            if huellas != huellas_v1:", "            if False:"),
     ("M93 migracion no rota generacion", S,

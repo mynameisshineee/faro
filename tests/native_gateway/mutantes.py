@@ -134,17 +134,17 @@ JUEZ_CAUSAL: dict[str, str] = {
 
 
 def _monta(destino: Path) -> None:
-    # La suite del gateway reutiliza las autoridades estrictas del arnes del
-    # Journal. El montaje temporal tiene que copiar esa dependencia completa:
-    # si no, el meta-falsador muere en collection por ``ModuleNotFoundError`` y
-    # ningun mutante llega a ejercitar el techo de transporte.
-    for nombre in ("native_gateway.py", "coordination.py", "ledger_parse.py"):
+    # La suite incluye la factory, el transporte y el driver completos. Copiar
+    # sólo tres módulos dejaba el control sin runtime_root y sus dependencias.
+    # Se conserva el producto plano y los arneses compartidos, sin Git ni
+    # resultados previos. El control sin mutar sigue siendo obligatorio.
+    for modulo in RAIZ.glob("*.py"):
+        shutil.copy2(modulo, destino / modulo.name)
+    for nombre in ("ui.html", "roster.example.json"):
         shutil.copy2(RAIZ / nombre, destino / nombre)
-    shutil.copytree(RAIZ / "tests" / "native_gateway",
-                    destino / "tests" / "native_gateway")
-    (destino / "tests" / "journal").mkdir(parents=True)
-    shutil.copy2(RAIZ / "tests" / "journal" / "_arnes.py",
-                 destino / "tests" / "journal" / "_arnes.py")
+    shutil.copytree(RAIZ / "tests", destino / "tests",
+                    ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache",
+                                                 "*.pyc", ".mutantes*"))
 
 
 FOCAL = "tests/native_gateway/test_raw_body_limit.py"
