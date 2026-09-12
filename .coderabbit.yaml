@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: es-ES
+early_access: false
+reviews:
+  profile: chill
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: true
+    auto_incremental_review: true
+    base_branches:
+      - "^codex/llminbox/faro/.*$"
+  path_instructions:
+    - path: "**/*.py"
+      instructions: >-
+        Prioriza errores de corrección, aislamiento entre carriles, identidad
+        derivada del servidor, durabilidad, idempotencia y recuperación.
+        Contrasta los comentarios con el código y los contratos reales.
+        Propón cambios defensivos concretos; no des por ejecutadas pruebas
+        que sólo estén descritas o preparadas.
+    - path: "web/src/**"
+      instructions: >-
+        Revisa que los errores y estados desconocidos sean visibles, que la
+        credencial no se filtre y que los datos de mensajes se rendericen como
+        texto. Comprueba el comportamiento de primera puesta en marcha.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Comprueba que los tests se ejecuten y que los errores se propaguen.
+        Distingue revisión de código, ejecución de CI y certificación de release.
+        No sugieras saltar pruebas o suavizar condiciones para obtener verde.
+chat:
+  auto_reply: true
