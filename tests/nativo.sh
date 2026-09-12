@@ -676,19 +676,42 @@ else bien "⊕ el escape -- deja pasar un posicional con guion (rc=$RC)"; fi
 
 echo "── ①b INBOX NO AUTO-CONFIRMA; ACK EXPLÍCITO DECLARA SU FALLO ──"
 escenario ""; FK_HTTP=200; FK_LEIDO_HTTP=403
-FK_BODY=$'── pruebas · 1 de 1 para ti (lo más reciente) ──\n  abc #1 L1 · cto [FYI]\n    titular\n\nmarcar leído — pega esto tal cual:\n  POST /inbox/fe/leido\n  {"hasta":{"pruebas":1}}'
+# Sobre sintético del protocolo ACK v1; sólo lo consume el curl del arnés.
+# El contrato completo permite llegar al HTTP que estas pruebas clasifican.
+python3 - "$CASA" <<'PY'
+import base64,json,pathlib,sys,time
+casa=pathlib.Path(sys.argv[1])
+ack={"v":1,"grant":"A"*48,"principal":"fixture-fe","role":"fe",
+     "lane":"pruebas","ledger":"pruebas","cursor_generation":0,
+     "cursor_before":0,"allowed_arrivals":[1],"watermark":1,
+     "expires_at":int(time.time())+3600}
+grant=base64.urlsafe_b64encode(json.dumps(ack,sort_keys=True,
+    separators=(",",":")).encode()).decode().rstrip("=")
+casa.joinpath("ack.fixture").write_text(grant)
+casa.joinpath("inbox.fixture").write_text(
+    "── pruebas · 1 de 1 para ti (lo más reciente) ──\n"
+    "  abc #1 L1 · cto [FYI]\n    titular\n\n"
+    "marcar leído — pega esto tal cual:\n"
+    f"  llmi ack fe 1 --carril pruebas --grant {grant}\n\n"
+    "confirmación disponible — el CLI valida este sobre:\n"
+    "  POST /inbox/fe/ack\n  "+json.dumps({"hasta":{"pruebas":1},"ack":ack}))
+PY
+FK_BODY="$(cat "$CASA/inbox.fixture")"
+ACK_FIXTURE="$(cat "$CASA/ack.fixture")"
 corre inbox fe --carril pruebas
 igual "inbox validado no muta ⇒ rc=0" "0" "$RC"
-if [ -z "$(llamada '/leido')" ]; then bien "⊖ inbox no llamó /leido"
-else mal "⊖ inbox no llama /leido" "sin POST" "$(llamada '/leido')"; fi
-corre ack fe 1 --carril pruebas
+if [ -z "$(llamada '/leido')$(llamada '/ack')" ]; then bien "⊖ inbox no llamó /leido ni /ack"
+else mal "⊖ inbox no confirma" "sin POST" "hubo petición de confirmación"; fi
+corre ack fe 1 --carril pruebas --grant "$ACK_FIXTURE"
 igual "⊖ POLICY_DENIED en ACK explícito ⇒ rc=5" "5" "$RC"
 contiene "⊖ y nombra la clase que requiere migración nativa" "POLICY_DENIED" "$SAL"
+contiene "y el rechazo vino del endpoint ACK actual" "/inbox/fe/ack" "$(llamada '/ack')"
 
 escenario ""; FK_HTTP=200; FK_LEIDO_HTTP=500
-corre ack fe 1 --carril pruebas
+corre ack fe 1 --carril pruebas --grant "$ACK_FIXTURE"
 igual "⊖ fallo no tipado en ACK ⇒ rc=3, nunca 0" "3" "$RC"
 contiene "⊖ y declara que el cursor no avanzó" "cursor no avanzó" "$SAL"
+contiene "y el fallo HTTP vino del endpoint ACK actual" "/inbox/fe/ack" "$(llamada '/ack')"
 
 echo "── ㉑ P0/D8: el bootstrap va con Bearer de WORKLOAD, jamás con el token compartido ──"
 escenario ""; FK_HTTP=201 FK_RC=0 FK_BODY='{"token":"ses-1","runtime_instance":"rti","expires_at":"2099","generation":1}'

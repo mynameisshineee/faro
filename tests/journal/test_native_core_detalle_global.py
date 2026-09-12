@@ -171,14 +171,17 @@ def test_CENSO_ningun_raise_del_fichero_queda_FUERA_de_la_jerarquia():
     ve = [n2 for n2 in ast.walk(ast.parse(src))
           if isinstance(n2, ast.Raise) and isinstance(n2.exc, ast.Call)
           and getattr(n2.exc.func, "id", None) == "ValueError"]
-    assert len(ve) == 3, f"hay {len(ve)} `raise ValueError`, no 3"
+    assert len(ve) == 4, f"hay {len(ve)} `raise ValueError`, no 4"
     saneados = [r for r in ve
                 if r.exc.args and isinstance(r.exc.args[0], ast.Call)
                 and getattr(r.exc.args[0].func, "id", None) == "_saneado"]
     assert len(saneados) == 2, (
         f"solo {len(saneados)} de los `raise ValueError` pasan por `_saneado`. "
-        f"El tercero es el del `pepper` en `__init__`, que NO lleva dato externo "
-        f"—es una constante mia— y por eso no entra")
+        f"Los otros dos son mensajes constantes: pepper y límites de latest.")
+    constantes = [r for r in ve if r.exc.args
+                  and isinstance(r.exc.args[0], ast.Constant)
+                  and isinstance(r.exc.args[0].value, str)]
+    assert len(constantes) == 2, "un ValueError sin saneado debe ser texto constante"
     # ⚠️ MISMO DIENTE PARA `AssertionError`, y por un defecto MEDIDO, no por
     # simetria: la guarda del enum de `_rle` nacio como `raise AssertionError`
     # con f-string CRUDO y `campo` —un argumento— interpolado tal cual. El

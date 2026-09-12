@@ -86,7 +86,7 @@ esac
 # anulan cuando su override viene puesto (no vacío).
 http="${FK_HTTP:-200}"
 case "$url" in
-  */inbox/*/leido)                 [ -n "${FK_LEIDO_HTTP:-}" ]   && http="$FK_LEIDO_HTTP" ;;
+  */inbox/*/leido|*/inbox/*/ack)    [ -n "${FK_LEIDO_HTTP:-}" ]   && http="$FK_LEIDO_HTTP" ;;
   */sessions)                      [ -n "${FK_OPEN_HTTP:-}" ]    && http="$FK_OPEN_HTTP" ;;
   */sessions/current)              [ -n "${FK_REVOKE_HTTP:-}" ]  && http="$FK_REVOKE_HTTP" ;;
   */whoami)                        [ -n "${FK_WHOAMI_HTTP:-}" ]  && http="$FK_WHOAMI_HTTP" ;;
