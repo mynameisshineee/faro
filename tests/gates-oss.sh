@@ -162,7 +162,12 @@ construir "$D"; printf '%s  /etc/passwd\n' "$(printf 0123456789abcdef | shasum -
 esperar ROJO "ruta ABSOLUTA en SHA256SUMS" -- $GATE --dir "$D" --trust "$TMP/trust-ok.json"
 construir "$D"; printf '%s  ../fuera.txt\n' "$(printf x | shasum -a 256 | awk '{print $1}')" >> "$D/SHA256SUMS"
 esperar ROJO "ruta con .. en SHA256SUMS" -- $GATE --dir "$D" --trust "$TMP/trust-ok.json"
-construir "$D"; grep 'sbom' "$D/SHA256SUMS" >> "$D/SHA256SUMS"
+construir "$D"
+# GNU grep rechaza leer y escribir el mismo fichero; en ese caso no había
+# duplicado y el gate estaba recibiendo todavía el control válido.
+entrada_sbom="$(grep 'sbom' "$D/SHA256SUMS")" || exit 2
+[ -n "$entrada_sbom" ] || exit 2
+printf '%s\n' "$entrada_sbom" >> "$D/SHA256SUMS" || exit 2
 esperar ROJO "entrada DUPLICADA" -- $GATE --dir "$D" --trust "$TMP/trust-ok.json"
 construir "$D"; printf 'nohex  sbom.cdx.json\n' >> "$D/SHA256SUMS"
 esperar ROJO "digest que no es 64 hex" -- $GATE --dir "$D" --trust "$TMP/trust-ok.json"

@@ -1,10 +1,21 @@
 {
   "collection_manifest_sha256": "3479a8d799645c6a529e7554c172ceb1461319347136862c059859132b29aa06",
   "evidence_level": "collected_dependency_texts",
+  "input_amendments": [
+    {
+      "changed_json_fields": [
+        "scripts"
+      ],
+      "path": "web/package.json",
+      "previous_sha256": "764226eae15d6c7526c79102c1881516229394e4e553d29024efd13f371e3f09",
+      "scope": "Scripts-only input update; all other package fields and four dependency inputs unchanged. Package versions and collected notice bytes retained. No new collection or build qualification.",
+      "sha256": "d076addd22d4acf96a74dd556b66e331d13a5fefbd49e52dc0be4fcb31a34ce5"
+    }
+  ],
   "inputs": {
     "requirements.in": "0564ffa9f4c531ab5f218944cbdfa5422dd4e236d43dc32e899c7cfe5d2ae049",
     "requirements.lock": "75354919e8ef5846c36fbd1f899eddb91ec7f6be45ee92cf2c66e2a8f9ce5634",
-    "web/package.json": "764226eae15d6c7526c79102c1881516229394e4e553d29024efd13f371e3f09",
+    "web/package.json": "d076addd22d4acf96a74dd556b66e331d13a5fefbd49e52dc0be4fcb31a34ce5",
     "web/pnpm-lock.yaml": "dbe5e4114558be78f1769b380b703d2bba446722ca5a186acc8c478762a627e4",
     "web/pnpm-workspace.yaml": "ff867fe5fbd95e7cba8c33682aa47794b8228faba271273fc4e24a0bc98fcb5d"
   },
