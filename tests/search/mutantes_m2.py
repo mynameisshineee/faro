@@ -904,12 +904,15 @@ def _permisos(raiz: str, *, escribible: bool) -> None:
     LECTURA: correr la suite dentro de ella la contamina (`__pycache__`, `.pytest_cache`,
     ficheros temporales de los tests) y a partir de ahí cada mutante nace de un sujeto
     que ya no es el que se hasheó. Read-only convierte esa contaminación en un error
-    ruidoso en vez de en una deriva silenciosa."""
+    ruidoso en vez de en una deriva silenciosa. Los bits de ejecución se
+    conservan: congelar no debe volver inejecutable el CLI que prueba la suite."""
     dmode, fmode = (0o755, 0o644) if escribible else (0o555, 0o444)
     for base_dir, dirs, ficheros in os.walk(raiz, topdown=not escribible):
         for f in ficheros:
             with contextlib.suppress(OSError):
-                os.chmod(os.path.join(base_dir, f), fmode)
+                ruta = os.path.join(base_dir, f)
+                ejecutable = os.stat(ruta).st_mode & 0o111
+                os.chmod(ruta, fmode | ejecutable)
         for d in dirs:
             with contextlib.suppress(OSError):
                 os.chmod(os.path.join(base_dir, d), dmode)

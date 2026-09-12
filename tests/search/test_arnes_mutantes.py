@@ -420,6 +420,31 @@ def test_la_suite_limpia_no_corre_dentro_de_la_pristina(arnes, monkeypatch):
             "la basura de la suite limpia llegó al árbol de un mutante")
 
 
+def test_congelar_y_clonar_conserva_ejecutables_sin_convertir_datos(tmp_path):
+    original = tmp_path / "original"
+    original.mkdir()
+    cli = original / "llmi"
+    cli.write_text("#!/bin/sh\nexit 0\n")
+    cli.chmod(0o751)
+    datos = original / "datos.sh"
+    datos.write_text("datos, no programa\n")
+    datos.chmod(0o644)
+    try:
+        mut._permisos(str(original), escribible=False)
+        assert cli.stat().st_mode & 0o111 == 0o111
+        assert not cli.stat().st_mode & 0o222
+        assert not datos.stat().st_mode & 0o111
+
+        copia = pathlib.Path(mut._clon(str(original), str(tmp_path / "copia")))
+        assert (copia / "llmi").stat().st_mode & 0o111 == 0o111
+        assert (copia / "llmi").stat().st_mode & 0o200
+        assert not (copia / "datos.sh").stat().st_mode & 0o111
+        assert (copia / "llmi").read_bytes() == cli.read_bytes()
+        assert not cli.stat().st_mode & 0o222, "clonar no descongela el original"
+    finally:
+        mut._permisos(str(original), escribible=True)
+
+
 def test_mata_falla_cerrado_si_el_hijo_sigue_vivo(monkeypatch):
     """(E) `killpg` + `communicate` sin mirar el `poll()` era un cierre que se creía."""
     class Zombi:
