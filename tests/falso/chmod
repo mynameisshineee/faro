@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# `chmod` FALSO, INERTE salvo que se le pida fallar. Existe para los falsadores de
+# «si no puedo asegurar el modo 600 de un fichero con un secreto dentro, PARO ANTES de
+# curl en vez de mandar la peticion sin credencial y culpar al servidor del 401».
+#
+# 🩸 POR QUE LLEVA CONTADOR. Con un unico interruptor global, el primer `chmod` del
+# arranque —el del TOKEN LEGADO, que ahora tambien va a fichero de configuracion 600—
+# se comia el fallo y NINGUN falsador podia llegar al de la credencial de workload:
+# el test de workload media, sin saberlo, el camino del legado. Un interruptor que
+# dispara en el primer sitio no puede discriminar entre dos sitios.
+#   LLMI_TEST_CHMOD_FALLA=1      -> falla SIEMPRE (el de antes; sirve para el legado)
+#   LLMI_TEST_CHMOD_FALLA_EN=N   -> falla SOLO en la N-esima llamada de ESTA corrida
+# El contador vive en fichero porque cada `chmod` es un proceso nuevo: una variable
+# de shell no cruza el fork y el contador se quedaria siempre en 1.
+if [ "${LLMI_TEST_CHMOD_FALLA:-0}" = "1" ]; then exit 1; fi
+if [ -n "${LLMI_TEST_CHMOD_FALLA_EN:-}" ]; then
+  _c="${LLMI_TEST_CHMOD_CUENTA:-/tmp/llmi-chmod-cuenta}"
+  _n=$(( $(cat "$_c" 2>/dev/null || echo 0) + 1 ))
+  printf '%s' "$_n" > "$_c" 2>/dev/null || true
+  [ "$_n" = "$LLMI_TEST_CHMOD_FALLA_EN" ] && exit 1
+fi
+for d in /bin /usr/bin /sbin /usr/sbin; do
+  [ -x "$d/chmod" ] && exec "$d/chmod" "$@"
+done
+exit 127

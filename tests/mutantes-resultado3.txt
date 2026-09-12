@@ -1,0 +1,8 @@
+✅ M8-docs-abiertos → /docs cerrado → 404|/openapi cerrado → 404|
+✅ M8-docs-abiertos → /docs cerrado → 404|/openapi cerrado → 404|
+🔴 NINGÚN ROJO  M9-cita-resuelve-por-prefijo  ← o el gate es ciego, o el mutante no llega: MIRAR EL EFECTO
+🔴 NINGÚN ROJO  M9-cita-resuelve-por-prefijo  ← o el gate es ciego, o el mutante no llega: MIRAR EL EFECTO
+🔴 NINGÚN ROJO  M11-techo-de-salud-no-decae  ← o el gate es ciego, o el mutante no llega: MIRAR EL EFECTO
+🔴 NINGÚN ROJO  M11-techo-de-salud-no-decae  ← o el gate es ciego, o el mutante no llega: MIRAR EL EFECTO
+✅ M12-la-corrupcion-no-se-cura → el arranque no debe ver «esquema cambiado»|el índice corrupto se reconstruye solo|la base nueva lleva la huella de esquema de AHORA|la reconstrucción queda registrada en verify|un índice corrupto en el arranque se cura|y el cursor apunta A LA MISMA ENTRADA tras reconstruir|y el cursor SIGUE ahí tras reiniciar|
+✅ M12-la-corrupcion-no-se-cura → el índice corrupto se reconstruye solo|la base nueva lleva la huella de esquema de AHORA|la reconstrucción queda registrada en verify|un índice corrupto en el arranque se cura|y el cursor apunta A LA MISMA ENTRADA tras reconstruir|y el cursor SIGUE ahí tras reiniciar|

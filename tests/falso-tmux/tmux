@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# ── `tmux` FALSO, EN DIRECTORIO APARTE Y A PROPÓSITO ─────────────────────────
+# `_aviso_identidad` → `_yo_y_carril` → `_sesion_tmux` → `tmux display-message`.
+# SIN tmux, `_yo_y_carril` sale por `return 1` en su PRIMERA línea y `_carriles_conocidos`
+# —que es quien emite el `curl` pre-auth— NUNCA se alcanza. O sea: el resto de la suite
+# corre en un entorno donde el defecto P0-B es INALCANZABLE, y por eso ningún bloque lo
+# cazó nunca. El instrumento que faltaba no era una aserción: era el tmux.
+#
+# Va en su PROPIO directorio y no en `tests/falso/` justo por eso: metido ahí cambiaría el
+# entorno de los 36 bloques anteriores, que hoy miden con tmux ausente.
+case "${1:-}" in
+  display-message) echo "fe-pruebas" ;;
+  *)               exit 1 ;;
+esac

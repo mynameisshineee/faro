@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# `python3` FALSO — CONTADOR TRANSPARENTE, y existe para una pregunta concreta:
+# ¿cuántas veces se abre el fichero de sesión en una corrida?
+#
+# El cargador del CLI es un bloque de Python que recibe la ruta por `LLMI_SESFILE`, y el
+# redactado de `--json` la recibía como ARGUMENTO. Las dos son reaperturas POR NOMBRE de lo
+# que se acaba de escribir, y ninguna se ve desde fuera: no dejan `stat`, no dejan huella en
+# el log de red y su resultado es idéntico al bueno. Contarlas aquí es la única forma de
+# distinguir «lee el snapshot» de «vuelve a abrir el fichero» por CONDUCTA y no por lectura
+# del fuente — un contador del fuente no acredita lo que hace la corrida.
+#
+# Vive en un directorio APARTE (`tests/falso-py`) y no en `tests/falso`: interponerlo en
+# todas las pruebas cambiaría el intérprete de las 349 que ya pasan, y un instrumento que
+# altera el sujeto no mide el sujeto.
+# 🩸 Y DISTINGUE EL CARGADOR DEL ESCRITOR, porque LOS DOS reciben `LLMI_SESFILE` y contar
+# sólo esa variable los suma como si fueran lo mismo — me dio «el cargador corre 2 veces»
+# cuando la segunda era la escritura atómica haciendo su trabajo. El escritor trae ADEMÁS
+# `LLMI_CUERPO`: cargador = con ruta y SIN cuerpo.
+#   LLMI_TEST_PY_LOG=<fichero>  -> una línea por invocación: ruta, cuerpo y argv
+set -u
+if [ -n "${LLMI_TEST_PY_LOG:-}" ]; then
+  printf 'PY sesfile=%s cuerpo=%s argv=%s\n' \
+    "${LLMI_SESFILE:-}" "${LLMI_CUERPO:-}" "$*" >> "$LLMI_TEST_PY_LOG"
+fi
+# Delega en el python3 REAL: se quita del PATH el directorio de este stub y se busca otra vez.
+_mio="$(cd -- "$(dirname -- "$0")" && pwd)"
+_limpio=""
+_viejo_ifs="${IFS:-}"
+IFS=':'
+for _p in $PATH; do
+  [ "$_p" = "$_mio" ] && continue
+  _limpio="${_limpio:+$_limpio:}$_p"
+done
+IFS="$_viejo_ifs"
+_real="$(PATH="$_limpio" command -v python3 2>/dev/null || true)"
+[ -n "$_real" ] || { echo "el python3 real no está en el PATH sin $_mio" >&2; exit 127; }
+exec "$_real" "$@"
