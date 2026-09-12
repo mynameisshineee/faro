@@ -248,13 +248,18 @@ echo "── la suite pasa en un clon limpio (sin roster.json) ──"
 WT_LIMPIO="$(mktemp -d)/wt"
 if git worktree add -q --detach "$WT_LIMPIO" HEAD 2>/dev/null; then
   PY_L="${PY_BIN:-$PWD/.venv-test/bin/python}"
+  LOG_LIMPIO="$(mktemp)"
   (cd "$WT_LIMPIO" && PYTHONDONTWRITEBYTECODE=1 "$PY_L" -m pytest tests/pytest -q \
-      -p no:cacheprovider >/dev/null 2>&1)
+      -p no:cacheprovider >"$LOG_LIMPIO" 2>&1)
   RC_LIMPIO=$?
   git worktree remove --force "$WT_LIMPIO" >/dev/null 2>&1
-  [ "$RC_LIMPIO" -eq 0 ] \
-    && bien "la suite pasa sin roster.json (como en un clon o en CI)" \
-    || mal "la suite pasa sin roster.json" "rc=0" "rc=$RC_LIMPIO: algun test lee el censo de esta maquina"
+  if [ "$RC_LIMPIO" -eq 0 ]; then
+    bien "la suite pasa sin roster.json (como en un clon o en CI)"
+  else
+    mal "la suite pasa sin roster.json" "rc=0" "pytest del clon limpio devolvio rc=$RC_LIMPIO"
+    tail -n 80 "$LOG_LIMPIO"
+  fi
+  rm -f "$LOG_LIMPIO"
 else
   mal "poder crear el worktree de comprobacion" "worktree creado" "no se pudo: NO MEDIDO"
 fi
