@@ -1,0 +1,4 @@
+✅ M4-borrado-no-alarma → · obtenido: 0|borrar SÍ alarma|
+✅ M5-censo-tira-cursores → el cursor sobrevive al alta de un agente|la base nueva lleva la huella de esquema de AHORA|
+✅ M6-archivo-vuelve-a-la-bandeja → el ledger de archivo NO puede servirse en la bandeja|excluir en silencio es esconder correo|
+🔴 NINGÚN ROJO  M7-provisional-desaparece  ← el mutante pasó desapercibido

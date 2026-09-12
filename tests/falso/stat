@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# `stat` FALSO. Nació para simular un fallo de permisos; hoy su trabajo es OTRO y más útil:
+# ser el SABOTEADOR que demuestra que el CLI ya NO comprueba el fichero de sesión POR RUTA.
+#
+# El defecto que esto vigila es un TOCTOU: comprobar por nombre y ABRIR por nombre son dos
+# búsquedas distintas, y entre ellas el fichero puede ser otro. Con `LLMI_TEST_STAT_SWAP`
+# este falso hace exactamente ese ataque —si alguien le pregunta por esa ruta, la sustituye
+# por un impostor y devuelve el resultado del bueno—, así que:
+#   · si el CLI comprueba por ruta -> el sabotaje ocurre y el test lo ve
+#   · si el CLI abre UNA vez y hace `fstat` del descriptor -> nadie llama aquí y NO ocurre
+# `LLMI_TEST_STAT_LOG` registra las llamadas sobre la ruta vigilada: el aserto es que el
+# fichero quede VACÍO. Un registro vacío por no haberse invocado el falso sería un verde por
+# ceguera, y por eso el test comprueba ADEMÁS que el run funciona y trae el token legítimo.
+#   LLMI_TEST_STAT_FALLA=1          -> falla siempre
+#   LLMI_TEST_STAT_FALLA_PARA=<sub> -> falla si algún argumento contiene <sub>
+#   LLMI_TEST_STAT_SWAP=<ruta>      -> al preguntar por <ruta>, la sustituye por un impostor
+#   LLMI_TEST_STAT_LOG=<fichero>    -> registra las llamadas que tocan SWAP/FALLA_PARA
+_reg() { [ -n "${LLMI_TEST_STAT_LOG:-}" ] && printf 'stat %s\n' "$*" >> "$LLMI_TEST_STAT_LOG"; return 0; }
+
+if [ -n "${LLMI_TEST_STAT_SWAP:-}" ]; then
+  for a in "$@"; do
+    if [ "$a" = "$LLMI_TEST_STAT_SWAP" ]; then
+      _reg "$@"
+      printf '{"token":"IMPOSTOR-POR-STAT","runtime_instance":"rti-malo"}\n' > "$a.impostor" 2>/dev/null
+      chmod 644 "$a.impostor" 2>/dev/null
+      mv "$a.impostor" "$a" 2>/dev/null
+    fi
+  done
+fi
+if [ "${LLMI_TEST_STAT_FALLA:-0}" = "1" ]; then exit 1; fi
+if [ -n "${LLMI_TEST_STAT_FALLA_PARA:-}" ]; then
+  for a in "$@"; do
+    case "$a" in *"$LLMI_TEST_STAT_FALLA_PARA"*) _reg "$@"; exit 1 ;; esac
+  done
+fi
+for d in /usr/bin /bin /sbin /usr/sbin; do
+  [ -x "$d/stat" ] && exec "$d/stat" "$@"
+done
+exit 127
