@@ -1,0 +1,816 @@
+{
+  "collection_manifest_sha256": "3479a8d799645c6a529e7554c172ceb1461319347136862c059859132b29aa06",
+  "evidence_level": "collected_dependency_texts",
+  "inputs": {
+    "requirements.in": "0564ffa9f4c531ab5f218944cbdfa5422dd4e236d43dc32e899c7cfe5d2ae049",
+    "requirements.lock": "75354919e8ef5846c36fbd1f899eddb91ec7f6be45ee92cf2c66e2a8f9ce5634",
+    "web/package.json": "764226eae15d6c7526c79102c1881516229394e4e553d29024efd13f371e3f09",
+    "web/pnpm-lock.yaml": "dbe5e4114558be78f1769b380b703d2bba446722ca5a186acc8c478762a627e4",
+    "web/pnpm-workspace.yaml": "ff867fe5fbd95e7cba8c33682aa47794b8228faba271273fc4e24a0bc98fcb5d"
+  },
+  "packages": [
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/number",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__number/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.3"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/primitive",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__primitive/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.7"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-collection",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-collection/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.15"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-compose-refs",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-compose-refs/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.5"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-context",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-context/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.2.2"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-dialog",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-dialog/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.23"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-direction",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-direction/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.4"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-dismissable-layer",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-dismissable-layer/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.19"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-dropdown-menu",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-dropdown-menu/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "2.1.24"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-focus-guards",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-focus-guards/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.6"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-focus-scope",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-focus-scope/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.16"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-id",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-id/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.4"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-menu",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-menu/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "2.1.24"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-popper",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-popper/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.3.7"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-portal",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-portal/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.17"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-presence",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-presence/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.10"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-primitive",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-primitive/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "2.1.10"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-roving-focus",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-roving-focus/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.19"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-scroll-area",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-scroll-area/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.2.18"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-select",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-select/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "2.3.7"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-separator",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-separator/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.15"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-slot",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-slot/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.3.3"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-tooltip",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-tooltip/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.2.16"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-use-callback-ref",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-use-callback-ref/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.4"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-use-controllable-state",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-use-controllable-state/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.2.6"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-use-is-hydrated",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-use-is-hydrated/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "0.1.3"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-use-layout-effect",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-use-layout-effect/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.4"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-use-previous",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-use-previous/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.1.4"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@radix-ui/react-visually-hidden",
+      "texts": [
+        {
+          "path": "licenses/js/@radix-ui__react-visually-hidden/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "version": "1.2.11"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@tanstack/query-core",
+      "texts": [
+        {
+          "path": "licenses/js/@tanstack__query-core/LICENSE",
+          "sha256": "a405ee70c632bb938acb7ac5f210e814409b3760ea9d2329d8ed8ffcfd11a0e7"
+        }
+      ],
+      "version": "5.101.4"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@tanstack/react-query",
+      "texts": [
+        {
+          "path": "licenses/js/@tanstack__react-query/LICENSE",
+          "sha256": "a405ee70c632bb938acb7ac5f210e814409b3760ea9d2329d8ed8ffcfd11a0e7"
+        }
+      ],
+      "version": "5.101.4"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@types/react",
+      "texts": [
+        {
+          "path": "licenses/js/@types__react/LICENSE",
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "version": "19.2.17"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "@types/react-dom",
+      "texts": [
+        {
+          "path": "licenses/js/@types__react-dom/LICENSE",
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "version": "19.2.3"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "aria-hidden",
+      "texts": [
+        {
+          "path": "licenses/js/aria-hidden/LICENSE",
+          "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9"
+        }
+      ],
+      "version": "1.2.6"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "Apache-2.0",
+      "ecosystem": "npm",
+      "name": "class-variance-authority",
+      "texts": [
+        {
+          "path": "licenses/js/class-variance-authority/LICENSE",
+          "sha256": "0ccbf956cffc8dcf515809433cb5242ee67c94513d46e48c261d68d0880de406"
+        }
+      ],
+      "version": "0.7.1"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "clsx",
+      "texts": [
+        {
+          "path": "licenses/js/clsx/LICENSE",
+          "sha256": "9a9edad7baae52622bddf3c15b2ef8a33d2c89f2d25408ad13e8a7481c6b0c97"
+        }
+      ],
+      "version": "2.1.1"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "ISC",
+      "ecosystem": "npm",
+      "name": "lucide-react",
+      "texts": [
+        {
+          "path": "licenses/js/lucide-react/LICENSE",
+          "sha256": "1e7290b35280a048667bbf0ebabac1c7fd52a75300e8b2946ac165715997f2bc"
+        }
+      ],
+      "version": "0.469.0"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "react",
+      "texts": [
+        {
+          "path": "licenses/js/react/LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "version": "19.2.8"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "react-dom",
+      "texts": [
+        {
+          "path": "licenses/js/react-dom/LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "version": "19.2.8"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "react-remove-scroll",
+      "texts": [
+        {
+          "path": "licenses/js/react-remove-scroll/LICENSE",
+          "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9"
+        }
+      ],
+      "version": "2.7.2"
+    },
+    {
+      "collection_source": "resolved-node-modules",
+      "declared_license": "MIT",
+      "ecosystem": "npm",
+      "name": "tailwind-merge",
+      "texts": [
+        {
+          "path": "licenses/js/tailwind-merge/LICENSE.md",
+          "sha256": "d4c70c7ce38cea8778f0aed3fc0bef0a9dbd27f13bd8b6773cbd6d37941971e5"
+        }
+      ],
+      "version": "3.6.0"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": "MIT",
+      "ecosystem": "pypi",
+      "name": "annotated-doc",
+      "texts": [
+        {
+          "path": "licenses/py/annotated-doc/LICENSE",
+          "sha256": "fff170779a6acbf65abdb405c087f1cee1786691e4a96a4034517e4a504a0cdf"
+        }
+      ],
+      "version": "0.0.5"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": "MIT",
+      "ecosystem": "pypi",
+      "name": "annotated-types",
+      "texts": [
+        {
+          "path": "licenses/py/annotated-types/LICENSE",
+          "sha256": "fe1049884b1a0d9342901e88e07f32925d24b3121d9972b6a6805fb9824b095d"
+        }
+      ],
+      "version": "0.8.0"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": "MIT",
+      "ecosystem": "pypi",
+      "name": "anyio",
+      "texts": [
+        {
+          "path": "licenses/py/anyio/LICENSE",
+          "sha256": "5361ac9dc58f2ef5fd2e9b09c68297c17f04950909bbc8023bdb82eacf22c2b0"
+        }
+      ],
+      "version": "4.15.0"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": "BSD-3-Clause",
+      "ecosystem": "pypi",
+      "name": "click",
+      "texts": [
+        {
+          "path": "licenses/py/click/LICENSE.txt",
+          "sha256": "9a8ad106a394e853bfe21f42f4e72d592819a22805d991b5f3275029292b658d"
+        }
+      ],
+      "version": "8.5.0"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": "MIT",
+      "ecosystem": "pypi",
+      "name": "fastapi",
+      "texts": [
+        {
+          "path": "licenses/py/fastapi/LICENSE",
+          "sha256": "4ec89ffc81485b97fec584b2d4a961032eeffe834453894fd9c1274906cc744e"
+        }
+      ],
+      "version": "0.121.3"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "ecosystem": "pypi",
+      "name": "h11",
+      "texts": [
+        {
+          "path": "licenses/py/h11/LICENSE.txt",
+          "sha256": "37db5bb85926db28a427a25867f10b1232003aea1be69ccb851138adb8e6f361"
+        }
+      ],
+      "version": "0.16.0"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": "MIT",
+      "ecosystem": "pypi",
+      "name": "httptools",
+      "texts": [
+        {
+          "path": "licenses/py/httptools/LICENSE",
+          "sha256": "f4573e7cb7676745fb5b8d36fa548aa93e391cfb6872ddacd65130c45ea6a92d"
+        },
+        {
+          "path": "licenses/py/httptools/vendor/http-parser/LICENSE-MIT",
+          "sha256": "79e6ba8b687cb54786207342b9b6fcee0ac10218453ed9009b84d949b2233cc0"
+        },
+        {
+          "path": "licenses/py/httptools/vendor/llhttp/LICENSE",
+          "sha256": "628168d68bb5a8a17e0bbefb3bd74e326e1edc20583d76f52f457c82c921867d"
+        }
+      ],
+      "version": "0.8.0"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": "BSD-3-Clause",
+      "ecosystem": "pypi",
+      "name": "idna",
+      "texts": [
+        {
+          "path": "licenses/py/idna/LICENSE.md",
+          "sha256": "1a9a4f0e3d479a27240ddd59a9137a66ab4a0f9dfdc8ca6188cc0bfd85187f04"
+        }
+      ],
+      "version": "3.19"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": "MIT",
+      "ecosystem": "pypi",
+      "name": "pydantic",
+      "texts": [
+        {
+          "path": "licenses/py/pydantic/LICENSE",
+          "sha256": "a9e186f3ca16b5eef84318e7a701721351a00cb7b8ae3a4394b67b49e3529ef3"
+        }
+      ],
+      "version": "2.13.4"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": "MIT",
+      "ecosystem": "pypi",
+      "name": "pydantic-core",
+      "texts": [
+        {
+          "path": "licenses/py/pydantic-core/LICENSE",
+          "sha256": "2afdd30d54b4d62b6f488a6bcc1546e84ec5061f13f4209c03d012348783795a"
+        }
+      ],
+      "version": "2.46.4"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": [],
+      "ecosystem": "pypi",
+      "name": "python-dotenv",
+      "texts": [
+        {
+          "path": "licenses/py/python-dotenv/LICENSE",
+          "sha256": "80619b7049f08c81683ad0e01f08f257a840652dd71ee83146d36658c7d2c2b9"
+        }
+      ],
+      "version": "1.2.3"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "ecosystem": "pypi",
+      "name": "pyyaml",
+      "texts": [
+        {
+          "path": "licenses/py/pyyaml/LICENSE",
+          "sha256": "8d3928f9dc4490fd635707cb88eb26bd764102a7282954307d3e5167a577e8a4"
+        }
+      ],
+      "version": "6.0.3"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": "BSD-3-Clause",
+      "ecosystem": "pypi",
+      "name": "starlette",
+      "texts": [
+        {
+          "path": "licenses/py/starlette/LICENSE.md",
+          "sha256": "dcb95677a02240243187e964f941847d19b17821cf99e5afae684fab328c19bf"
+        }
+      ],
+      "version": "0.50.0"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": "PSF-2.0",
+      "ecosystem": "pypi",
+      "name": "typing-extensions",
+      "texts": [
+        {
+          "path": "licenses/py/typing-extensions/LICENSE",
+          "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
+        }
+      ],
+      "version": "4.16.0"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": "MIT",
+      "ecosystem": "pypi",
+      "name": "typing-inspection",
+      "texts": [
+        {
+          "path": "licenses/py/typing-inspection/LICENSE",
+          "sha256": "804b59b25f2c31bd278f9202a19ae49a3945aa2664387e2d0a128c7cacc61ec3"
+        }
+      ],
+      "version": "0.4.4"
+    },
+    {
+      "collection_source": "pinned-wheel-pypi",
+      "declared_license": "BSD-3-Clause",
+      "ecosystem": "pypi",
+      "name": "uvicorn",
+      "texts": [
+        {
+          "path": "licenses/py/uvicorn/LICENSE.md",
+          "sha256": "efe1acf3e62fb99c288b0ec73e5a773b7268ef4320fe757ea994214e4b63c371"
+        }
+      ],
+      "version": "0.39.0"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": [
+        "License :: OSI Approved :: Apache Software License",
+        "License :: OSI Approved :: MIT License"
+      ],
+      "ecosystem": "pypi",
+      "name": "uvloop",
+      "texts": [
+        {
+          "path": "licenses/py/uvloop/LICENSE-APACHE",
+          "sha256": "377025287798f9dcd819e1f826fa5fc5e2f382528691ab0528c5cf8c8c282c27"
+        },
+        {
+          "path": "licenses/py/uvloop/LICENSE-MIT",
+          "sha256": "6dd4c399f26de043d77a2ad7e31db4cb5bf08ea8368b0a42d6e158635cc8ab62"
+        }
+      ],
+      "version": "0.22.1"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "ecosystem": "pypi",
+      "name": "watchfiles",
+      "texts": [
+        {
+          "path": "licenses/py/watchfiles/LICENSE",
+          "sha256": "4fd78355b67ce2677ede9fb6f63a250f377bb7e22088136a5f4699adb4bc069f"
+        }
+      ],
+      "version": "1.2.0"
+    },
+    {
+      "collection_source": "existing-wheel-cache",
+      "declared_license": "BSD-3-Clause",
+      "ecosystem": "pypi",
+      "name": "websockets",
+      "texts": [
+        {
+          "path": "licenses/py/websockets/LICENSE",
+          "sha256": "3d6a0c050d8bec52fabad502e45fb25bd02bcadbd70dea34d447b6a0ff4e6da8"
+        }
+      ],
+      "version": "17.1"
+    }
+  ],
+  "release_qualified": false,
+  "schema_version": 1
+}

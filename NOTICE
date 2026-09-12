@@ -1,0 +1,99 @@
+llminbox
+Copyright 2026 BIK AI Technologies, S.L.U.
+
+This product includes software developed by BIK AI Technologies, S.L.U.
+(trading as BIK Labs, https://biklabs.ai/).
+
+
+================================================================
+Design lineage
+================================================================
+
+No code, file, or algorithm from any third-party project is included in,
+or was ported into, this repository. The items below are architectural
+ideas that shaped this design; each is implemented independently in this
+project's own stack (Python / FastAPI / Pydantic / SQLite over markdown
+files), verified against the cited upstream source rather than copied
+from it.
+
+Verified: a symbol search across this repository's source for
+buzz-specific identifiers (pg_advisory_lock, catch_unwind, AuditError,
+RelayMessage, axum::, tokio::, kind_u32, is_gift_wrap, GENESIS_HASH, and
+related names) returns zero matches. The two codebases share no function,
+struct, or dependency; the ideas below were read, tested against this
+project's own data, and re-implemented from scratch in a different
+language and a different storage model.
+
+--- block/buzz (https://github.com/block/buzz), Apache License 2.0 ---
+
+- Relay owns the log, serves queries.
+  Follows buzz-relay's architecture (ARCHITECTURE.md: "The relay is the
+  single source of truth"): llminbox is a derived index sitting in
+  front of the markdown ledgers it serves, never the record of truth
+  itself. If it dies, nothing is blocked — see README, falsifier T5.
+
+- Typed, addressed events.
+  The append contract's mandatory `tipo` (type) and `to` (recipients)
+  fields follow the same shape as buzz's Nostr `kind` + `#p`/`#h` tags:
+  every event declares what it is and who it is for. Independently
+  implemented in Python/Pydantic over markdown headers; nothing was
+  ported from buzz's Rust/Nostr code.
+
+- Validate at indexing time, not only at the write edge.
+  Idea taken from buzz-relay (handlers/event.rs:655-660 and
+  ingest.rs:1525), which repeats the same duplicate-pubkey check in two
+  handlers on purpose, because one path skips the main pipeline. Same
+  shape here, on a worse ratio: in this project's own deployment, raw
+  `>>` appends outnumber the validated `POST /append` path roughly 8 to
+  1. If the only validator were the write path, most real traffic would
+  enter unchecked. `GET /lint` validates what's indexed, regardless of
+  how it was written.
+
+- A hash chain — tried, measured, and retired.
+  The first working version of this project's integrity check was
+  patterned after buzz-audit (ARCHITECTURE.md, "buzz-audit — Hash-Chain
+  Audit Log"): prev_hash chaining, an all-zero genesis, and a
+  verify_chain() that recomputes and compares. Measured against this
+  project's actual shape — one append-only markdown file with several
+  independent writers, not a single-writer table under an advisory lock
+  — the chain was found inert here: the same code computed both sides of
+  the comparison, so it always matched itself and could only ever catch
+  corruption of its own database. It was also found incorrect by design
+  once tested against a real multi-writer scenario: a git merge preserves
+  every entry but not their order, and a chain keyed by position reports
+  that as mass tampering. It was retired in favor of git's own commit
+  chain plus a simpler, orthogonal check this project still runs: does an
+  append-only file ever lose an entry it once had. See
+  docs/DESIGN-NOTES.es.md for the full account, including the two
+  measurement mistakes that produced false confidence along the way.
+
+No further code, structures, or algorithms from block/buzz appear in
+this repository.
+
+
+================================================================
+Third-party dependencies
+================================================================
+
+This project depends at runtime on FastAPI, Pydantic and Uvicorn,
+installed via pip at the exact transitive versions and artefact hashes in
+requirements.lock. They are not vendored into this repository.
+
+Their licences, and those of their transitive dependencies, are NOT
+asserted here. An earlier version of this file stated that all of them
+were MIT, BSD-3-Clause or PSF-2.0 and that none required reproduction of
+its licence text. That conclusion was never measured, and it contradicted
+THIRD_PARTY_NOTICES.md, which records the inventory as incomplete. It has
+been withdrawn rather than reworded: a licence conclusion that nobody ran
+is not made true by being cautiously phrased.
+
+What is measured, and what is still missing, is recorded in
+THIRD_PARTY_NOTICES.md. That file is the only place in this repository
+where a third-party licence is stated, and it states none that was not
+read from the package itself.
+
+The container image is built in two stages, and the second copies the
+compiled web bundle out of the first. The image therefore redistributes both
+the JavaScript packages compiled into that bundle and the installed Python
+runtime packages. Those packages are inventoried in THIRD_PARTY_NOTICES.md;
+their collected licence texts are still an explicit release blocker there.
