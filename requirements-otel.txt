@@ -1,0 +1,21 @@
+# M3 · EXTRA DE RUNTIME, PERO **OBLIGATORIO EN EL GATE DE M3**.
+#
+# Las dos cosas a la vez, y no es contradicción:
+#  · de RUNTIME es opcional — `observability.py` no importa OTel al cargar, sólo
+#    dentro del sink y sólo si alguien le pasa un bundle; el defecto es
+#    `not_configured`, sin SDK y sin exportar;
+#  · en CI es OBLIGATORIO — un job que instalara sólo `requirements-test.txt`
+#    saltaba la integración ENTERA y salía verde. El gate acreditaba «M3 pasa» sin
+#    ejecutar un caso contra el SDK real. Por eso el fichero de test importa el SDK
+#    DURO (sin `importorskip`) y el job de M3 instala esto antes de correr.
+#
+# FIJADO A PARCHE EXACTO. Entre menores se mueven cosas que este módulo mira:
+# `LogRecord` desapareció en 1.39.0 y la ubicación de los readers cambió de
+# `_sdk_config.metric_readers` (1.38) a `_metric_readers` (1.44). Un `1.*` metería
+# esa deriva en el gate sin aviso.
+opentelemetry-api==1.44.0
+opentelemetry-sdk==1.44.0
+
+# NO se fija ningún EXPORTADOR (`opentelemetry-exporter-otlp`, …) y tampoco es un
+# olvido: elegir destino, TLS y credenciales es decisión del operador, no de una
+# librería de observabilidad. `_OtelSink` se cuelga del proveedor que ya exista.

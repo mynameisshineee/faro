@@ -1,0 +1,77 @@
+# Config del usuario: rutas de SU máquina y nombres de SUS agentes.
+# El repo lleva los ejemplos; esto lo genera `llmi init`.
+docker-compose.override.yml
+roster.json
+# Copias de seguridad del censo (`roster.json.pre-alta-*`, `.bak-*`): las deja
+# cualquier alta de agente y NO están cubiertas por la línea de arriba. Una se
+# quedó suelta el 2026-08-17 y `git add -A` la habría publicado con los nombres
+# y humanos de los 60 agentes.
+roster.json.*
+# Sugerencias de censo que `llmi init` propone cuando roster.json YA existe
+# (no lo pisa) — nombres candidatos vistos en tus ledgers, para que los revises
+# a mano. No es config activa, así que no se commitea.
+roster.discovered.json
+# Mapa nombre-lógico → ruta de host de cada ledger, que `llmi init` escribe
+# para que `llmi stat` pueda comparar bytes host↔contenedor (detector de
+# deriva de montaje). Dato derivado de docker-compose.override.yml, no config.
+.llmi-mounts.json
+.env
+__pycache__/
+
+# política local de exclusión (rutas de esta máquina)
+.llminbox-excluir
+
+# la interfaz compilada la genera el Dockerfile, no se commitea
+web/node_modules/
+static/
+web/tsconfig.tsbuildinfo
+
+# Backups que `llmi init` deja al converger montajes: llevan el MISMO contenido
+# sensible que los ficheros de arriba —rutas de la máquina del operador y los
+# nombres reales de su flota— pero con sufijo, así que las reglas por nombre
+# exacto NO los cubren. Este repo es PÚBLICO: sin esta línea, un `git add .`
+# publica 23 ficheros con la topología interna de quien lo instale.
+*.bak-*
+*.CONVERGIDO-*
+*.lock
+# …PERO el lock de dependencias SÍ se versiona. `*.lock` está aquí por los cerrojos de
+# ciclo de vida (`.llmi-lifecycle.lock/`), y de rebote se tragaba `requirements.lock` —
+# que el `Dockerfile` COPIA. Sin esta línea se entrega un build que sólo funciona en la
+# máquina donde se generó el lock, y falla al clonar con «file not found».
+!requirements.lock
+/dist/
+
+# Estado que `llmi up` copia para el contenedor (censo + mapa de montajes).
+# Derivado: se regenera en cada arranque. No es config y no se versiona.
+.llminbox-state/
+
+# Sello del último estado APLICADO con éxito (ver `llmi up`). Derivado.
+.llmi-applied
+.llmi-lifecycle.lock/
+
+# Salida de EJECUCIÓN del arnés de mutantes M2. El runner y los tests se commitean;
+# su resultado no: es de la corrida, no del código, y commitearlo haría que un árbol
+# limpio dependiera de cuándo se corrió por última vez.
+tests/search/.mutantes_m2.json
+tests/search/.mutantes_m2.json.tmp
+
+# Diagnóstico PARCIAL del arnés de mutantes. Misma razón que el canónico.
+tests/search/.mutantes_m2.parcial.json
+tests/search/.mutantes_m2.parcial.json.tmp
+
+# Temporal único de cada escritura del arnés (pid + uuid). Sólo queda si el proceso
+# muere por SIGKILL: se ignora para que un cadáver no ensucie el árbol.
+tests/search/.mutantes_m2*.tmp
+
+# M4: salidas de los guiones de pilotaje/reversión y del SBOM. Son EVIDENCIA de una
+# corrida concreta, no fuente: se archivan junto al digest, no en el árbol.
+evidencia-m4/
+sbom/
+# ── Piloto M1 (ADR-001) ────────────────────────────────────────────────────────
+# El pepper y el mapa de credenciales del piloto NO se commitean. El mapa se
+# indexa por la credencial EN CLARO, así que un commit suyo la publica; el pepper
+# es lo que hace opaco a `credential_ref`, y sin él la ligadura se recalcula.
+# Las rutas reales llegan por variable de entorno al compose del piloto.
+*.pepper
+.pilot-credenciales*.json
+.env.pilot

@@ -1,0 +1,115 @@
+# PUBLICATION MANIFEST — llminbox
+#
+# This project publishes by ALLOWLIST: what is declared in this file travels, and
+# anything not declared does not. The published artefact is built from this list, so
+# a reader can reproduce the published set exactly — compare this file against the
+# tree you received and nothing should be missing and nothing extra.
+#
+# FORMAT: one path PREFIX per line. A line naming a directory covers everything
+# under it. Lines starting with '#' are comments; the section headers below are
+# labels for readers, not syntax.
+#
+# The criterion is the CLASS of the file: the product and the harness that lets you
+# check it are published; the operational files of the fleet that runs this
+# installation are not. They are not deleted — they simply do not travel.
+
+# ── A · PRODUCT ───────────────────────────────────────────────────────────────
+# The service and its CLI: what a user runs.
+servicio.py
+llmi
+ui.html
+coordination.py
+journal_projection_backend.py
+kind_registry.py
+ledger_parse.py
+message_policy.py
+native_gateway.py
+observability.py
+operator_admission.py
+process_sampler.py
+projector.py
+projector_runner.py
+publicar.py
+runtime_root.py
+search_contract.py
+search_cursor.py
+search_store.py
+supervisor_adapter.py
+supervisor_composicion.py
+supervisor_driver.py
+supervisor_periodico.py
+supervisor_registro.py
+supervisor_runner.py
+supervisor_transport.py
+telemetry_bridge.py
+atestigua_artefacto.py
+fleet_deadline_runner.py
+web/
+examples/
+
+# ── B · HARNESS AND BUILD ─────────────────────────────────────────────────────
+# What lets an external reader CHECK what this project claims: tests, gates, the
+# build and its CI.
+tests/
+tools/
+bench/
+third_party/
+Dockerfile
+.dockerignore
+.gitattributes
+.gitignore
+.env.example
+docker-compose.yml
+requirements.in
+requirements.lock
+requirements-test.txt
+requirements-otel.txt
+roster.example.json
+.github/
+.coderabbit.yaml
+
+# ── C · PRODUCT DOCUMENTS AND LEGAL OBLIGATIONS ───────────────────────────────
+# What a reader needs in order to use, audit and contribute: the documents the
+# product refers to, and the files the licence requires to travel with the code.
+LICENSE
+NOTICE
+THIRD_PARTY_NOTICES.md
+DCO
+CLA.md
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+GOVERNANCE.md
+MAINTAINERS.md
+SECURITY.md
+CHANGELOG.md
+README.md
+PROTOCOL.md
+RELEASE-CHECKLIST.md
+docs/GUARANTEES.md
+docs/ADR-001-NATIVE-AUTHORITY.md
+docs/ADR-003-MESSAGE-POLICY-MIGRATION.md
+docs/V0.9-CERTIFICATION.md
+docs/V0.9-EXECUTION.md
+docs/STATE-OF-THE-ART.md
+docs/SUPERVISOR-DRIVER.md
+docs/DESIGN-BRIEF.md
+scripts/m4-sbom.sh
+scripts/check-fleet-manifest.py
+docker-compose.pilot.yml
+docker-compose.pilot-estreno.yml
+docker-compose.pilot-native.yml
+docker-compose.pilot-key-init.yml
+scripts/m4-pilot.sh
+docs/PILOT-M1-TOPOLOGY.md
+scripts/m4-evidencia.sh
+scripts/m4-restore-helper.py
+scripts/m4-rollback.sh
+docs/DESIGN-NOTES.es.md
+docs/architecture
+docs/runbooks
+docs/tutorial
+docs/screenshot.jpg
+
+# This manifest travels so readers can compare declared and actual coverage.
+# Hygiene checks their union; release item 4.7 also rejects undeclared tarball files.
+OSS-MANIFEST.txt

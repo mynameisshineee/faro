@@ -1,0 +1,78 @@
+# Keep local state, credentials and development artefacts out of the build
+# context. Dockerfile COPY statements are intentionally explicit as a second
+# boundary; this file prevents BuildKit/the daemon from receiving the bytes in
+# the first place.
+.git
+.github
+.codex
+.agents
+.claude
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.log
+*.bak
+*.bak-*
+*.swp
+*.tmp
+
+.llminbox-state
+.llminbox-credenciales*
+docker-compose.override.yml
+roster.json
+
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+.venv
+.venv-*
+node_modules
+web/node_modules
+web/dist
+
+scratch
+.recovery-*
+dist
+build
+artifacts
+
+# ── Añadido tras medir el contexto REAL (falsador plantado, tests/contexto-build.sh)
+# Estos dos SÍ llegaban al contexto con la lista de arriba, y los dos son estado
+# local: `.llminbox-excluir` lleva nombres de ledgers de la instalación y
+# `.llmi-mounts.json` lleva rutas absolutas de la máquina del operador. Que el
+# Dockerfile no los copie no basta: el daemon ya ha recibido los bytes, y el
+# contexto viaja a la caché de build.
+.llminbox-excluir
+.llmi-applied
+.llmi-mounts.json
+.llminbox.token
+*.token
+.DS_Store
+*.orig
+*.rej
+.idea
+.vscode
+
+# ── Nada de esto lo copia el Dockerfile ──────────────────────────────────────
+# Las listas `COPY` del Dockerfile son la autoridad: interfaz, servicio, búsqueda,
+# observabilidad, kernel nativo, gateway, admisión y projector se enumeran allí de
+# forma cerrada. Todo lo demás sólo engorda el contexto y mete en la caché de build
+# ficheros que el artefacto no necesita — incluida documentación interna.
+# ⚠️ Si algún día un COPY necesita una de estas rutas, hay que quitarla de aquí:
+# el build fallará diciendo que no existe, que es como debe fallar.
+docs
+tests
+examples
+_shared_refs

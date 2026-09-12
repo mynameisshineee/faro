@@ -1,0 +1,253 @@
+services:
+  llminbox:
+    build: .
+    # Parametrizable: con el nombre fijo, dos instancias colisionan y la segunda
+    # muere con "container name already in use". Quien quiera probar esto sin tumbar
+    # lo que ya tiene corriendo pone LLMINBOX_NAME y LLMINBOX_PORT.
+    container_name: ${LLMINBOX_NAME:-llminbox}
+    restart: unless-stopped
+    # SOLO loopback. Este servicio indexa el canon de coordinación de la flota;
+    # no tiene ningún motivo para escuchar en una interfaz de red.
+    ports: ["127.0.0.1:${LLMINBOX_PORT:-8077}:8077"]
+    environment:
+      # LA INSTANCIA, DENTRO. El atestado del mapa va atado a ella; sin este pase, el
+      # servicio la desconoce y dos instancias con la misma clave y el mismo mapa
+      # emitirían el mismo atestado.
+      LLMINBOX_NAME: ${LLMINBOX_NAME:-llminbox}
+      # El digest del mapa que se desplegó. El servicio lo comprueba EN CADA ARRANQUE,
+      # así que un reinicio de Docker —que no pasa por `llmi`— tampoco puede cargar un
+      # mapa sustituido después del atestado.
+      LLMINBOX_CREDENCIALES_SHA: ${LLMINBOX_CREDENCIALES_SHA:-}
+      LLMINBOX_DB: /data/llminbox.sqlite
+      # LA CLAVE QUE FIRMA LOS CURSORES DE BÚSQUEDA (M2). `servicio.py:3648` la lee y
+      # este fichero no la pasaba: perilla INERTE — se podía poner, el arranque no
+      # protestaba y no hacía nada. El guarda del repo lo cazaba
+      # (`test_ninguna_perilla_nace_muerta`) y dejaba el job `pytest` ROJO, que a su
+      # vez tapaba todo lo que corriera detrás.
+      #
+      # VACÍA POR DEFECTO Y SIN DEFAULT, y las dos mitades importan:
+      #  · vacía ⇒ `servicio.py:3681` no monta la búsqueda. Fail-closed, y es la
+      #    conducta de HOY: cablearla no enciende nada que no estuviera encendido.
+      #    Con clave corta, `_clave_cursor_busqueda()` responde 503 en vez de firmar
+      #    con algo débil.
+      #  · sin default ⇒ un valor aquí sería una clave COMPARTIDA por todo el que
+      #    clone el repo, o sea cursores de búsqueda forjables por cualquiera. El
+      #    secreto no vive en git: lo pone quien despliega.
+      LLMINBOX_SEARCH_CURSOR_KEY: "${LLMINBOX_SEARCH_CURSOR_KEY:-}"
+      LLMINBOX_POLL: "${LLMINBOX_POLL:-30.0}"
+      # Entrega dirigida por `@nombre` en cabeceras SIN flecha, desde esta fecha.
+      # Por qué hay fecha y no un simple on/off: sobre el historial existente el
+      # cambio hace aparecer 12.442 entradas de golpe en 25 bandejas —`qa` con
+      # 1.977— y una bandeja de dos mil devuelve a cualquiera a leer el canal
+      # entero, que es lo contrario de lo que esto arregla. Con corte, el efecto
+      # empieza en el correo NUEVO y el historial se queda como está.
+      # Vacío ⇒ desactivado. Ver `ARROBA_DESDE` en ledger_parse.py.
+      # Ledgers de ARCHIVO: historia cerrada que la bandeja serviría para siempre
+      # y se cobraría en cada lectura. Vacío por defecto — quien clone esto no se
+      # encuentra correo escondido. La bandeja declara al pie lo que deja fuera.
+      # ⚠️ El valor por defecto era el nombre de un ledger de la casa que lo
+      # escribió, y CONTRADECÍA al comentario de arriba: quien clonaba heredaba
+      # una exclusión que no significaba nada en su instalación. Vacío es lo que
+      # el comentario ya prometía. Quien excluya archivos, que los nombre.
+      LLMINBOX_INBOX_EXCLUIR: "${LLMINBOX_INBOX_EXCLUIR:-}"
+      LLMINBOX_ARROBA_DESDE: "${LLMINBOX_ARROBA_DESDE:-2026-08-08}"
+      # El token vive en ~/.llminbox.token (0600, fail-closed: sin él el
+      # compose ni arranca). `llmi up` lo genera si falta y lo exporta al
+      # subproceso — no hay ningún `.env` de por medio. NO va en el compose:
+      # esto se commitea, el token no.
+      LLMINBOX_TOKEN: "${LLMINBOX_TOKEN:?falta ~/.llminbox.token — corre: ./llmi up}"
+      # Vacío por defecto a propósito: un `docker compose up` crudo, sin haber
+      # corrido `llmi init`, arranca con CERO ledgers en vez de fallar contra
+      # rutas que no existen en tu máquina. `./llmi init` descubre los tuyos
+      # y escribe `docker-compose.override.yml` (que `docker compose` carga solo,
+      # sin `-f`) con el valor real y los bind-mounts que le corresponden a cada
+      # uno — ver ese fichero, GENERADO, para el porqué de cada montaje.
+      # VACÍO POR DEFECTO A PROPÓSITO, y `/health` lo canta. Con C5, `/pendientes` exige
+      # `X-Llminbox-Watcher`, así que sin esto responde 401 a todo el mundo: el agregado
+      # queda inerte y el resto del servicio funciona igual. Obligarlo (`:?`) tumbaría el
+      # arranque de una flota que hoy no lo tiene puesto, y eso es peor que un endpoint
+      # inerte y declarado. Hasta ahora la variable NI SIQUIERA LLEGABA AL CONTENEDOR:
+      # exportarla no servía de nada porque el compose no la pasaba.
+      # EL BUILD QUE SE DESPLIEGA, inyectado desde el `llmi up` que lo construyó. Sin
+      # esto `/version` contesta `origen: desconocido` —correcto, pero inútil—: el
+      # contenedor no lleva `.git`, así que no hay de dónde derivarlo. Y `declarado` no
+      # es lo mismo que `derivado`: esto afirma QUÉ SE CONSTRUYÓ, que es justo lo que un
+      # tercero necesita para atar su evidencia a un SHA público.
+      # El umbral del hombre muerto, configurable POR DESPLIEGUE. Antes lo leía el
+      # servicio y esto no lo pasaba: el número estaba clavado en el código y `/health`
+      # lo publica como `tope_s`, del que la flota DERIVA su propio umbral — o sea que
+      # estaba clavado en los dos lados a la vez.
+      # Vacío = sin configurar = el defecto del código (180). Un valor no numérico, cero
+      # o negativo NO cae al defecto: aborta el arranque diciendo qué corregir.
+      LLMINBOX_VIGILANCIA_MUDA_S: "${LLMINBOX_VIGILANCIA_MUDA_S:-}"
+      LLMINBOX_BUILD: "${LLMINBOX_BUILD:-}"
+      LLMINBOX_WATCHER_TOKEN: "${LLMINBOX_WATCHER_TOKEN:-}"
+      LLMINBOX_LEDGERS: "${LLMINBOX_LEDGERS:-}"
+      # ── M4 ─────────────────────────────────────────────────────────────────
+      # Las perillas M4 que siguen aquí las lee `servicio.py`, así que TIENEN que
+      # viajar: una variable que el
+      # código lee y el compose no pasa es una perilla inerte —se puede poner, el
+      # arranque no protesta y no hace nada—, y este repo tiene un guarda que lo caza
+      # (`test_ninguna_perilla_nace_muerta`). Me cazó a mí con dos de ellas.
+      #
+      # El atestado NO es configurable: describe los bytes horneados junto al
+      # servicio. Redirigirlo a un bind mount mezclaría autoridad de imagen y
+      # autoridad del operador, y permitiría fabricar el gate de rollback.
+      # El journal DURABLE de coordinación (ADR-001). Vacío mientras M1 no aterrice:
+      # `/health.journal` sale `disponible: false` con su motivo, que es lo correcto —
+      # un journal ausente no es un journal sano.
+      LLMINBOX_JOURNAL: ${LLMINBOX_JOURNAL:-}
+      # Bandera EXPLÍCITA de que M1 está integrado. No se deduce de que exista un
+      # fichero: una bandera que se enciende sola es la forma habitual de que un
+      # fail-closed se vuelva fail-open sin que nadie lo decida. Con ella a 1 y sin la
+      # consulta implementada, `/health` revienta a propósito en vez de publicar una
+      # política vacía como si fuera sana.
+      LLMINBOX_M1_INTEGRADO: ${LLMINBOX_M1_INTEGRADO:-}
+      LLMINBOX_ROSTER: /state/roster.json
+      # Ámbito de carril (③): carriles.tsv (SoT de flota, fuera de este repo) ×
+      # .llmi-mounts.json (nombre-de-este-servicio→ruta, lo escribe `llmi init`).
+      # Vacío por defecto a propósito, mismo patrón que LLMINBOX_LEDGERS — quien
+      # clone esto no se encuentra un feature encendido sin haberlo montado.
+      LLMINBOX_CARRILES: "${LLMINBOX_CARRILES:-}"
+      # Deja de ser opcional-externo: `llmi up` SIEMPRE lo deja en `/state`, así
+      # que la composición publicada puede —y debe— apuntar ahí. Con el default
+      # vacío, `_cargar_carriles()` devolvía {} aunque el fichero estuviera
+      # montado: la variable no señalaba a ninguna parte y nadie lo veía.
+      LLMINBOX_MOUNTS_JSON: /state/mounts.json
+      # Fuente FIRMADA del censo (①/② — review×3 2026-08-10, MAJOR code): la
+      # unión de `canon_identidad()` prefiere `roles-por-alias.json` a
+      # `roster.json` cuando está montado, porque los dos pueden divergir sin
+      # que nada lo avise (ver `_cargar_roles_por_alias` en ledger_parse.py).
+      # Mismo patrón que LLMINBOX_CARRILES: vacío por defecto, ruta real en
+      # docker-compose.override.yml (gitignored, se edita a mano). Sin montar,
+      # degrada a la conducta de hoy (sólo roster.json) — no falla abierto.
+      LLMINBOX_ROLES_ALIAS: "${LLMINBOX_ROLES_ALIAS:-}"
+
+      # ── PERILLAS QUE ESTABAN CONECTADAS AL CÓDIGO Y NO AL OPERADOR ────────────
+      # Las doce las cazó EJECUTAR un rollback en vez de afirmarlo: puse
+      # `LLMINBOX_WIP_GLOBAL=1`, arranqué, y `/claim` seguía sin declarar `wip`. La
+      # variable no llegaba aquí, así que el flag que había construido era inalcanzable
+      # desde donde se opera. Entre ellas `LLMINBOX_TOPE_EJECUTA`: el 3→1 por owner que
+      # el operador tendría que autorizar TAMPOCO habría funcionado — se pone la
+      # variable, el arranque no protesta, y el tope sigue en 3 sin que nadie lo vea.
+      #
+      # Todas con el defecto de `servicio.py` repetido AQUÍ y no vacío, a propósito: un
+      # `:-` vacío convertiría «no lo toco» en «ponlo a nada», y varias de estas revientan
+      # el arranque con un valor vacío. El defecto duplicado sí puede divergir, y por eso
+      # `tests/pytest/test_ninguna_perilla_es_inerte.py` compara los dos lados.
+      # La puerta del carril. Vacío = apagada, que es el estado de hoy: el comentario de
+      # `servicio.py:245` le dice al operador que la encienda «cuando la migración esté
+      # hecha», y hasta ahora esa instrucción era IMPOSIBLE de seguir — la variable no
+      # llegaba al contenedor. `servicio.py:2319` cuenta que ya se intentó activar el
+      # 2026-08-16 y hubo que estimar a ojo. Se pone, no se enciende.
+      LLMINBOX_CARRIL_OBLIGATORIO: "${LLMINBOX_CARRIL_OBLIGATORIO:-}"
+      # V8 · mapa credencial→{rol,carril} que emite infra. AUSENTE es el defecto y es
+      # el estado de hoy: sin él el servicio no puede afirmar quién llama, anota las
+      # llamadas de sujeto y las sirve. PRESENTE hace que quien traiga una credencial
+      # del mapa quede identificado y no pueda actuar como otro rol.
+      # Se pasa siempre aunque hoy esté vacía: una perilla que el código lee y compose
+      # no pasa es INERTE en el contenedor, y de esas ya llevamos doce.
+      # ⚠️ ES UNA RUTA **DENTRO** DEL CONTENEDOR, y decirlo aquí no es pedantería:
+      # tumbé el bus por no decirlo. Le pasé al operador la ruta del HOST
+      # (`/Users/…/.llminbox-credenciales.json`), él la exportó tal cual, y dentro no
+      # existe ⇒ `SystemExit` en el import ⇒ 11 reinicios y las ~71 sesiones sin bus.
+      # Es el P0 que @harness predijo en su pre-mortem, provocado por mi instrucción.
+      #
+      # El fichero del host se MONTA (abajo) y esta variable apunta a donde queda
+      # montado. Con el defecto —`/credenciales/mapa.json`, que no existe si nadie
+      # monta nada— el servicio arranca en fase 1, que es lo correcto: ausente ⇒ el
+      # defecto, en silencio.
+      # `:+` — expande a la ruta INTERNA sólo si el operador ha puesto la del HOST.
+      # UNA sola variable para quien despliega (dónde está en su disco) y una ruta fija
+      # dentro; mi primera versión usaba DOS y reproducía la confusión que arreglaba.
+      LLMINBOX_CREDENCIALES: ${LLMINBOX_CREDENCIALES:+/credenciales/mapa.json}
+      LLMINBOX_WIP_GLOBAL: "${LLMINBOX_WIP_GLOBAL:-}"
+      LLMINBOX_TOPE_EJECUTA: "${LLMINBOX_TOPE_EJECUTA:-3}"
+      # Vacío por defecto ⇒ sólo rige el global, conducta idéntica. `rol=tope` por comas.
+      LLMINBOX_TOPE_EJECUTA_POR_OWNER: "${LLMINBOX_TOPE_EJECUTA_POR_OWNER:-}"
+      LLMINBOX_TOPE_REVISORES: "${LLMINBOX_TOPE_REVISORES:-3}"
+      LLMINBOX_CLAIM_TTL_H: "${LLMINBOX_CLAIM_TTL_H:-4}"
+      LLMINBOX_CUERPO_MAX_FILAS: "${LLMINBOX_CUERPO_MAX_FILAS:-10}"
+      LLMINBOX_CUERPO_MAX_BYTES: "${LLMINBOX_CUERPO_MAX_BYTES:-200000}"
+      LLMINBOX_MUDO_H: "${LLMINBOX_MUDO_H:-2}"
+      LLMINBOX_CHEQUEO: "${LLMINBOX_CHEQUEO:-60}"
+      LLMINBOX_SUELO_RECONSTRUCCION: "${LLMINBOX_SUELO_RECONSTRUCCION:-300}"
+      # La wiki: vacío = sin wiki, que es un estado legítimo. El montaje va aparte.
+      LLMINBOX_WIKI: "${LLMINBOX_WIKI:-}"
+    volumes:
+      # El ÍNDICE va en volumen nombrado, no en bind-mount: SQLite sobre el sistema
+      # de ficheros virtualizado de macOS es lento y su bloqueo es dudoso. El índice
+      # es derivado — si el volumen se pierde, se reconstruye en unos segundos.
+      - llminbox-data:/data
+      # El CONTRATO de la flota, sólo lectura. Se monta un DIRECTORIO y no el fichero:
+      # si se montara el fichero y no existiera, Docker crearía un directorio con su
+      # nombre y el censo leería «ilegible» donde la verdad es «no está» — un error
+      # inventado por el montaje. Con el directorio, ausente es ausente.
+      #
+      # Por defecto apunta al `_shared_refs/` VACÍO de este repo, y eso es correcto: sin
+      # política, el censo dice `ausente` en vez de inventarse los campos exigidos.
+      - ${LLMINBOX_POLICY_DIR:-./_shared_refs}:/_shared_refs:ro
+      # EL MAPA DE CREDENCIALES DE V8. Se monta el FICHERO del host en una ruta fija
+      # de dentro, y `LLMINBOX_CREDENCIALES_INTERNA` es lo que se le dice al servicio.
+      # Dos variables porque son dos cosas distintas y confundirlas fue lo que tumbó
+      # el bus: DÓNDE ESTÁ EN TU DISCO vs QUÉ RUTA LEE EL SERVICIO.
+      #
+      # Por defecto apunta a `_shared_refs/` —un directorio que SIEMPRE existe— para
+      # que el montaje no falle cuando nadie ha emitido; con la variable interna vacía
+      # el servicio ni lo mira. Montar un fichero que no existe hace que Docker cree un
+      # DIRECTORIO en su lugar, y entonces el error sería «no es JSON» en vez de «no
+      # está»: la misma trampa que ya documenta el montaje de la política de arriba.
+      # El defecto apunta a un fichero que SIEMPRE existe en el repo, para que el
+      # montaje no falle cuando nadie ha emitido: con la variable vacía, el `:+` de
+      # arriba deja `LLMINBOX_CREDENCIALES` sin valor y el servicio ni lo mira.
+      #
+      # A un FICHERO y no a un directorio: montar una ruta que no existe hace que
+      # Docker cree un DIRECTORIO en su lugar, y entonces el error sería «no es JSON»
+      # en vez de «no está» — la misma trampa que documenta el montaje de la política.
+      - ${LLMINBOX_CREDENCIALES:-./roster.example.json}:/credenciales/mapa.json:ro
+      # Relativo al propio fichero de compose, no a un $HOME concreto: cualquiera
+      # que clone este repo lo tiene ya en el sitio correcto, sea cual sea su
+      # usuario o dónde puso el checkout.
+      #
+      # DIRECTORIO, no fichero, y las dos razones son cicatrices de este repo:
+      #
+      #  · un bind-mount de FICHERO ausente Docker lo sustituye en silencio por un
+      #    DIRECTORIO vacío, y el extractor no reconoce a nadie (`[censo] no pude
+      #    leer …: Is a directory`). Por eso `llmi init`/`llmi up` lo crean antes.
+      #  · y un bind-mount de FICHERO se ata al INODO: el 2026-08-18
+      #    `roles-por-alias.json` se reemplazó por rename en el host y el
+      #    contenedor sirvió DOS DÍAS el censo viejo, sin un solo error. Un mount
+      #    de directorio rehace la resolución del nombre en cada `open()`.
+      #
+      # DIRECTORIO DEDICADO, no el checkout. Dos razones, las dos cicatrices:
+      #
+      #  · un bind-mount de FICHERO se ata al INODO: el 2026-08-18
+      #    `roles-por-alias.json` se reemplazó por rename en el host y el
+      #    contenedor sirvió DOS DÍAS el censo viejo, sin un solo error.
+      #  · y montar `.` entero (que fue mi primer intento) SÍ ensancha el
+      #    perímetro de lectura: `.git` con el historial completo —que puede
+      #    contener secretos retirados en commits posteriores—, los backups
+      #    `*.bak-*` y el override con las rutas reales de nueve repos. `:ro`
+      #    limita la escritura, no la lectura. Un path traversal pasaría de
+      #    alcanzar un fichero a alcanzar el checkout entero.
+      #
+      # `llmi up` rellena este directorio antes de levantar. Un mount de
+      # DIRECTORIO ausente Docker lo crea vacío en vez de sustituirlo por otra
+      # cosa, así que la cicatriz del «fichero ausente → directorio vacío en
+      # silencio» tampoco aplica.
+      - ./.llminbox-state:/state:ro
+    healthcheck:
+      # Mira el CUERPO de /health, no solo el código HTTP: con el indexador
+      # muerto en bucle (ledger roto, censo ilegible, …) /health sigue
+      # devolviendo 200 con `{"ok": false}` — un healthcheck que solo comprueba
+      # el status marca "healthy" sobre un servicio mudo. Medido en vivo antes de
+      # este fix: `docker ps` decía "(healthy)" con varios ledgers vaciándose en
+      # silencio detrás. `/health` no lleva token (es la única ruta que no lo
+      # necesita), así que el propio healthcheck puede llamarlo directo.
+      test: ["CMD", "python3", "-c", "import json,urllib.request,sys; d=json.load(urllib.request.urlopen('http://127.0.0.1:8077/health',timeout=2)); sys.exit(0 if d.get('ok') else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+
+volumes:
+  llminbox-data:

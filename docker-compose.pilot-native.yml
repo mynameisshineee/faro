@@ -1,0 +1,41 @@
+# Activacion del runtime nativo + projector activo para el piloto M1.
+#
+# Esta capa se aplica SOBRE docker-compose.pilot.yml y conserva su nombre de
+# proyecto, sus volumenes durables y su aislamiento. El preflight de ficheros
+# sigue siendo la primera instruccion del entrypoint; una vez arrancado, la
+# salud del servicio la decide /ready, que compone journal, audit latch,
+# barreras de admision y runner.
+#
+# El principal no declara su carril por entorno. runtime_root lo resuelve en el
+# mapa V8 atestado y exige que tenga exactamente `outbox_worker`. El mismo mapa
+# debe incluir un operador del mismo carril con exactamente
+# `admission_operator`; ese operador abre/cierra las barreras por HTTP.
+#
+# El frame key no viaja en una variable de entorno ni dentro del YAML. Vive en
+# un volumen nombrado, regular, propiedad del uid efectivo del gateway, modo
+# 0600 exacto y al menos 32 bytes. `docker-compose.pilot-key-init.yml` lo copia
+# una sola vez desde el host; el gateway sólo recibe el volumen de lectura.
+
+name: llminbox-pilot-m1
+
+services:
+  gateway:
+    entrypoint: ["/bin/sh", "-c",
+                 "python3 /app/tools/pilot_preflight.py && exec uvicorn runtime_root:create_app --factory --host 0.0.0.0 --port 8077 --log-level warning"]
+    environment:
+      LLMINBOX_LEGACY_MUTATION_POLICY: "native-required"
+      LLMINBOX_PROJECTOR_MODE: "active"
+      LLMINBOX_PROJECTOR_PRINCIPAL_ID: "pilot-projector"
+      LLMINBOX_PROJECTOR_LEDGER: "llminbox"
+      LLMINBOX_PROJECTOR_FRAME_KEY_FILE: "/run/projector/frame.key"
+    volumes:
+      - llminbox-pilot-projector-key:/run/projector:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8077/ready', timeout=3).read()"]
+      interval: 5s
+      timeout: 4s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  llminbox-pilot-projector-key:

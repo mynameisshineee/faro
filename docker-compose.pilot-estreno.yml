@@ -1,0 +1,57 @@
+# ESTRENO de los dos testigos — fichero aparte, y el motivo es un huevo y gallina.
+#
+# El gateway exige las dos huellas con `:?`, y esas huellas SÓLO existen después
+# del estreno. Con un solo fichero no se podía ni levantar para estrenarlas: `@sdet`
+# lo midió (⑤) y tenía razón — el fail-closed era más fuerte y el camino para
+# estrenarlo no estaba escrito en ninguna parte.
+#
+# Mismo `name:` que el compose del piloto A PROPÓSITO: así los volúmenes son LOS
+# MISMOS (`llminbox-pilot-m1_llminbox-pilot-journal`) y no un juego paralelo.
+#
+#   docker compose -f docker-compose.pilot-estreno.yml run --rm estreno
+#
+# Idempotente: con los testigos puestos no escribe y devuelve las mismas huellas.
+
+name: llminbox-pilot-m1
+
+services:
+  estreno:
+    build: .
+    restart: "no"
+    entrypoint: ["python3", "/app/tools/pilot_preflight.py", "--init"]
+    environment:
+      LLMINBOX_JOURNAL: /journal/coordination.sqlite
+      LLMINBOX_JOURNAL_VOLUME_ID: "${LLMINBOX_JOURNAL_VOLUME_ID:?genera uno con `python3 tools/pilot_preflight.py --genera-id`}"
+      LLMINBOX_LEDGER_PILOTO: /ledgers/llminbox
+      LLMINBOX_LEDGER_PILOTO_ID: "${LLMINBOX_LEDGER_PILOTO_ID:?identidad del ledger del carril piloto}"
+    volumes:
+      # SÓLO lo que hay que estrenar. Ni mapa, ni pepper, ni el segundo ledger: el
+      # estreno no los necesita y montar de más aquí sería abrir por la puerta de
+      # servicio lo que el compose del piloto cierra por la principal.
+      - llminbox-pilot-journal:/journal
+      - "${LLMINBOX_PILOT_LEDGER_HOST:?directorio del ledger del carril piloto}:/ledgers/llminbox"
+      - ./tools:/app/tools:ro
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    # ── I13 · endurecimiento. Este servicio TOCA el estado del piloto, así que
+    #    lleva lo mismo que el `agente`, que no toca nada y lo llevaba desde el
+    #    principio. Hallazgo de @security: el endurecimiento estaba INVERTIDO
+    #    respecto al radio de daño.
+    #    ⚠️ `read_only` congela el sistema de ficheros de LA IMAGEN. Los volúmenes
+    #    (`/journal`, `/data`, `/ledgers/llminbox`) se siguen escribiendo igual.
+    #    ⚠️ PRECONDICIÓN NUEVA que trae `user:` — léela antes del primer arranque:
+    #       los volúmenes nombrados nacen `root:root` y un proceso uid 1000 no
+    #       puede escribir en ellos. Antes del PRIMER estreno, alinea la propiedad:
+    #         docker run --rm -v llminbox-pilot-m1_llminbox-pilot-journal:/v \
+    #           alpine chown -R 1000:1000 /v
+    #         docker run --rm -v llminbox-pilot-m1_llminbox-pilot-index:/v \
+    #           alpine chown -R 1000:1000 /v
+    #         chown -R 1000:1000 "$LLMINBOX_PILOT_LEDGER_HOST"     # bind del host
+    #       Si no se hace, el estreno falla CERRADO con un `EACCES` con nombre —no
+    #       corrompe nada—, y ése es el lado bueno del error.
+    read_only: true
+    tmpfs: ["/tmp"]
+    user: "1000:1000"
+
+volumes:
+  llminbox-pilot-journal:

@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# ── `curl` FALSO — el arnés del camino nativo ────────────────────────────────
+# Existe porque la pasarela nativa NO EXISTE todavía (medido en 485d2db:
+# /sessions /whoami /events /receipts /leases ⇒ 0 rutas, con ⊕ control /inbox ⇒ 2).
+# Un test que necesite el servidor no probaría el cliente: probaría que hoy no hay
+# servidor, que es otra cosa y ya la sabemos.
+#
+# Y hace falta que sea DETERMINISTA en lo que más importa: los desenlaces que este
+# cliente existe para distinguir —timeout, 5xx, 401, replay— son justo los que un
+# servidor real no te deja provocar cuando quieres.
+#
+# Contrato: FK_HTTP · FK_RC · FK_BODY · FK_HEALTH_RC · FK_LOG (registro de lo enviado).
+set -u
+salida=""; quiere_codigo=0; url=""; reg=""; cfg=""
+args=("$@"); i=0; n=${#args[@]}
+while [ "$i" -lt "$n" ]; do
+  a="${args[$i]}"
+  case "$a" in
+    -o) i=$((i+1)); salida="${args[$i]}" ;;
+    -w) i=$((i+1)); quiere_codigo=1 ;;
+    -X) i=$((i+1)); reg="$reg M:${args[$i]}" ;;
+    # `A:` marca lo que vino en el ARGV (visible con `ps`); `H:` lo que llego por
+    # --config. Sin esa distincion no se puede asertar «el secreto no va en la linea de
+    # comandos», porque las dos formas acaban siendo la misma cabecera.
+    -H) i=$((i+1)); reg="$reg H:${args[$i]}"
+        case "${args[$i]}" in Authorization:*) reg="$reg A:${args[$i]}" ;; esac ;;
+    -d) i=$((i+1)); reg="$reg D:${args[$i]}" ;;
+    # `q` manda el texto por --data-urlencode, no en la URL. Sin registrarlo, el aserto
+    # «busca el TEXTO» miraba la URL y no podia verlo nunca.
+    --data-urlencode) i=$((i+1)); reg="$reg Q:${args[$i]}" ;;
+    # `--config` es donde viaja ahora el secreto (fuera del argv, que lo ve `ps`). Si el
+    # falso no lo leyera, la cabecera de Authorization seria INVISIBLE para los asertos y
+    # «va con Bearer» pasaria a no probar nada — un verde por ceguera del instrumento.
+    --config) i=$((i+1)); cfg="${args[$i]}"; reg="$reg CFG:$cfg"
+              if [ -r "$cfg" ]; then
+                while IFS= read -r linea; do
+                  case "$linea" in
+                    header\ =\ *) h="${linea#header = }"; h="${h%\"}"; h="${h#\"}"
+                                  reg="$reg H:$h" ;;
+                  esac
+                done < "$cfg"
+              fi ;;
+    http://*|https://*) url="$a" ;;
+  esac
+  i=$((i+1))
+done
+# ── BARRERA REAL PARA LA CARRERA DEL FICHERO DE SESION ──────────────────────
+# Un «inode swap» hecho DESPUES de que el proceso haya terminado no prueba nada: el
+# snapshot no se reabre porque ya no hay proceso. Para que el falsador tenga sujeto, la
+# sustitucion tiene que ocurrir DENTRO de la vida del CLI, entre la carga del snapshot y
+# el uso posterior del token. Este es el unico punto de sincronizacion que el arnes tiene:
+# cuando el CLI llama a `curl` YA ha cargado la sesion, y todavia le queda usarla.
+#   LLMI_TEST_SWAP_EN_LLAMADA="<origen>|<destino>"  -> mueve origen sobre destino, UNA vez
+#   LLMI_TEST_SWAP_LOG=<fichero>                    -> deja constancia de que ocurrio
+if [ -n "${LLMI_TEST_SWAP_EN_LLAMADA:-}" ]; then
+  _org="${LLMI_TEST_SWAP_EN_LLAMADA%%|*}"; _dst="${LLMI_TEST_SWAP_EN_LLAMADA#*|}"
+  if [ -e "$_org" ]; then
+    mv "$_org" "$_dst" 2>/dev/null
+    [ -n "${LLMI_TEST_SWAP_LOG:-}" ] && printf 'SWAP %s -> %s (en la llamada a %s)\n' \
+      "$_org" "$_dst" "$url" >> "$LLMI_TEST_SWAP_LOG"
+  fi
+fi
+
+# UNA LÍNEA POR LLAMADA. Antes se volcaban las cabeceras sueltas y la del token
+# compartido de una LECTURA previa (`/carriles`) se leía como si fuera de la MUTACIÓN:
+# el aserto pasaba a hablar de otra petición sin que se notara.
+[ -n "${FK_LOG:-}" ] && printf 'CALL U:%s%s\n' "$url" "$reg" >> "$FK_LOG"
+
+# `/health` va aparte: es la guarda `vivo`, no pide token, y su desenlace es
+# INDEPENDIENTE del de la ruta real. Esa independencia es justo el agujero que el
+# verde mudo explotaba, así que el falso tiene que poder reproducirla.
+case "$url" in
+  */health) [ "${FK_HEALTH_RC:-0}" = 0 ] && printf '%s' '{"ok":true,"carril":{"estado":"on","obligatorio":true,"mapa_cargado":true}}'
+             exit "${FK_HEALTH_RC:-0}" ;;
+  */carriles) printf '%s' '{"pruebas":"pruebas"}'; exit "${FK_RC:-0}" ;;
+esac
+
+# El flujo `llmi inbox` hace GET y luego POST /leido. Poder sabotear SOLO el
+# segundo paso es imprescindible: con un único FK_HTTP, un 403 también tumbaba
+# el GET y el falsador nunca alcanzaba la rama cuyo rc quería medir.
+#
+# `llmi admission …` encadena CUATRO llamadas por comando de escritura (abrir sesión
+# efímera · whoami · GET estado previo · POST transition) y hasta CINCO con la revocación
+# del trap — cada una necesita su propio canal para poder sabotear UNA sola sin tumbar las
+# demás. `FK_HTTP`/`FK_BODY` siguen siendo el DEFECTO de las que no se nombran: sólo se
+# anulan cuando su override viene puesto (no vacío).
+http="${FK_HTTP:-200}"
+case "$url" in
+  */inbox/*/leido)                 [ -n "${FK_LEIDO_HTTP:-}" ]   && http="$FK_LEIDO_HTTP" ;;
+  */sessions)                      [ -n "${FK_OPEN_HTTP:-}" ]    && http="$FK_OPEN_HTTP" ;;
+  */sessions/current)              [ -n "${FK_REVOKE_HTTP:-}" ]  && http="$FK_REVOKE_HTTP" ;;
+  */whoami)                        [ -n "${FK_WHOAMI_HTTP:-}" ]  && http="$FK_WHOAMI_HTTP" ;;
+  */operator/admission)            [ -n "${FK_GET_HTTP:-}" ]     && http="$FK_GET_HTTP" ;;
+  */operator/admission/transition) [ -n "${FK_ADM_HTTP:-}" ]     && http="$FK_ADM_HTTP" ;;
+  */operator/rollback/status)      [ -n "${FK_ROLLBACK_STATUS_HTTP:-}" ] && http="$FK_ROLLBACK_STATUS_HTTP" ;;
+  */operator/rollback/certify)     [ -n "${FK_ROLLBACK_CERT_HTTP:-}" ] && http="$FK_ROLLBACK_CERT_HTTP" ;;
+esac
+
+cuerpo="${FK_BODY:-}"
+case "$url" in
+  */sessions)                      [ -n "${FK_OPEN_BODY:-}" ]   && cuerpo="$FK_OPEN_BODY" ;;
+  */whoami)                        [ -n "${FK_WHOAMI_BODY:-}" ] && cuerpo="$FK_WHOAMI_BODY" ;;
+  */operator/admission)            [ -n "${FK_GET_BODY:-}" ]    && cuerpo="$FK_GET_BODY" ;;
+  */operator/admission/transition) [ -n "${FK_ADM_BODY:-}" ]    && cuerpo="$FK_ADM_BODY" ;;
+  */operator/rollback/status)      [ -n "${FK_ROLLBACK_STATUS_BODY:-}" ] && cuerpo="$FK_ROLLBACK_STATUS_BODY" ;;
+  */operator/rollback/certify)     [ -n "${FK_ROLLBACK_CERT_BODY:-}" ] && cuerpo="$FK_ROLLBACK_CERT_BODY" ;;
+esac
+[ -n "$salida" ] && printf '%s' "$cuerpo" > "$salida"
+rc="${FK_RC:-0}"
+case "$url" in
+  */sessions/current) [ -n "${FK_REVOKE_RC:-}" ] && rc="$FK_REVOKE_RC" ;;
+esac
+if [ "$quiere_codigo" = "1" ]; then
+  if [ "$rc" = "0" ]; then printf '%s' "$http"
+  else                     printf '%s' "${FK_HTTP:-000}"; fi
+fi
+exit "$rc"
