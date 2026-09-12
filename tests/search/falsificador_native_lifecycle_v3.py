@@ -48,7 +48,7 @@ if gateway_sha256 != GATEWAY_SHA256 or gateway_git_blob != GATEWAY_GIT_BLOB:
 
 import coordination as C  # noqa: E402
 import native_gateway as G  # noqa: E402  (sólo después de verificar el ancla)
-from tests.journal._arnes import GRAMATICA, censo  # noqa: E402
+from tests.journal._arnes import GRAMATICA, abre_admision, censo  # noqa: E402
 from tests.pytest.conftest import construir  # noqa: E402
 
 
@@ -78,6 +78,10 @@ def _compuesta(tmp_path, monkeypatch):
                                "principal_id": "p-native"}},
         {"p-native": [G.CAP_EVENT_WRITER]},
     )
+    # La prueba presupone un carril operativo. Su operador abre la admisión
+    # mediante sesión y capacidad reales antes de emitir la sesión del escritor.
+    # El cierre por defecto del producto se conserva.
+    abre_admision(journal, lanes=["demo"])
     servicio.app.include_router(G.create_native_router(journal))
     return servicio, journal, search, journal_dir
 
