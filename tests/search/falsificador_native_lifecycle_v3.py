@@ -6,8 +6,9 @@ gateway. Se ejecuta expresamente sobre el commit de composición:
 
     python3 tests/search/falsificador_native_lifecycle_v3.py
 
-La ausencia o un blob distinto del gateway auditado es un ERROR de precondición, nunca un
-skip/xfail verde.
+La ausencia o un blob distinto del gateway fijado es un ERROR de precondición, nunca
+un skip/xfail verde. El ancla identifica el sujeto que se prueba; por sí sola no
+acredita una auditoría ni un resultado de ejecución.
 """
 from __future__ import annotations
 
@@ -24,8 +25,10 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 GATEWAY = ROOT / "native_gateway.py"
-GATEWAY_SHA256 = "8e48d0710cb5216520385ea54c4a0b63376edc3800dd4a96df042310625e577a"
-GATEWAY_GIT_BLOB = "c39b1d223587d83baccbafe7b3b9ad81a389df67"
+# Gateway del snapshot Faro con las rutas de supervisión y organización integradas.
+# El gate histórico v4 sustituye ambas constantes al superponer su propio sujeto.
+GATEWAY_SHA256 = "ac3a0bc2f85e9ee729f5166d749bab34dbf30b2c649b99062245d3667745ee33"
+GATEWAY_GIT_BLOB = "75b166be094ef95c3b242be5aef73c9908935e08"
 if not GATEWAY.is_file():
     raise RuntimeError(
         "PRECONDICIÓN NO CUMPLIDA: native_gateway.py no está integrado; se esperaba "
@@ -39,12 +42,12 @@ gateway_git_blob = hashlib.sha1(
 ).hexdigest()
 if gateway_sha256 != GATEWAY_SHA256 or gateway_git_blob != GATEWAY_GIT_BLOB:
     raise RuntimeError(
-        "PRECONDICIÓN NO CUMPLIDA: native_gateway.py no coincide con el blob auditado "
+        "PRECONDICIÓN NO CUMPLIDA: native_gateway.py no coincide con el blob fijado "
         f"sha256={GATEWAY_SHA256} git-blob={GATEWAY_GIT_BLOB}; observado "
         f"sha256={gateway_sha256} git-blob={gateway_git_blob}")
 
 import coordination as C  # noqa: E402
-import native_gateway as G  # noqa: E402  (sólo después de acreditar el blob)
+import native_gateway as G  # noqa: E402  (sólo después de verificar el ancla)
 from tests.journal._arnes import GRAMATICA, censo  # noqa: E402
 from tests.pytest.conftest import construir  # noqa: E402
 
