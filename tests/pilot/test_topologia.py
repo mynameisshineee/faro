@@ -303,7 +303,8 @@ def historia_piloto(tmp_path):
     return repo, git
 
 
-def test_el_snapshot_inicial_no_oculta_cambios_mixtos_posteriores(historia_piloto):
+def test_SEC_el_test_de_la_flota_mide_lotes_sin_base_historica(historia_piloto):
+    """Una historia local nueva acepta cambios separados y rechaza mezclarlos."""
     repo, git = historia_piloto
     assert _mezclas_de_piloto(repo) == {}
     # Los cambios separados son válidos, aunque existan ambos en la historia.
@@ -532,15 +533,22 @@ def test_SDET_7_la_cabecera_del_compose_no_cita_ficheros_que_no_existen():
     assert not rotas, f"el compose cita ficheros que no existen: {rotas}"
 
 
-def test_SDET_3_el_test_de_no_tocar_la_flota_MIRA_el_returncode():
+def test_SDET_3_el_test_de_no_tocar_la_flota_MIRA_el_returncode(monkeypatch, historia_piloto):
     """③ de @sdet. Si `git` fallara —binario ausente, repo roto—, `stdout` sale
     vacío y la aserción «no tocaste nada» pasa **por el fallo**. Un test que sólo
     mira stdout no distingue «no hay diferencias» de «no pude preguntar»."""
-    fuente = (RAIZ / "tests" / "pilot" / "test_topologia.py").read_text(encoding="utf-8")
-    bloque = fuente[fuente.index("def test_el_pilot_no_toca_el_compose_de_la_flota"):]
-    bloque = bloque[:bloque.index("\ndef ") if "\ndef " in bloque else len(bloque)]
-    assert "check=True" in bloque or "returncode" in bloque, (
-        "el subprocess del test de flota no comprueba su propio rc")
+    import subprocess
+    repo, _git = historia_piloto
+    run = subprocess.run
+
+    def falla_log(args, **kwargs):
+        if args[:4] == ["git", "-C", str(repo), "log"]:
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="git fixture error")
+        return run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", falla_log)
+    with pytest.raises(AssertionError, match="git log falló"):
+        _mezclas_de_piloto(repo)
 
 
 @pytest.mark.parametrize("knob", ["LLMINBOX_JOURNAL_VOLUME_ID",
@@ -667,17 +675,6 @@ def test_SEC_el_job_que_corre_tests_pilot_tiene_historia_SUFICIENTE():
         assert str(prof) == "0", (
             f"checkout sin `fetch-depth: 0` (vale {prof!r}): shallow por defecto, y "
             f"el test de la flota pide historia")
-
-
-def test_SEC_el_test_de_la_flota_mide_lotes_sin_base_historica():
-    """El guarda recorre commits alcanzables y el worktree, sin depender de una
-    rama remota, merge-base o SHA que pueda desaparecer en otro clon."""
-    fuente = (RAIZ / "tests" / "pilot" / "test_topologia.py").read_text(encoding="utf-8")
-    bloque = fuente[fuente.index("def test_el_pilot_no_toca_el_compose_de_la_flota"):]
-    bloque = bloque[:bloque.index("\ndef ") if "\ndef " in bloque else len(bloque)]
-    assert 'git("log"' in bloque and 'git("diff-tree"' in bloque
-    assert "WORKTREE" in bloque
-    assert "merge-base" not in bloque and "cat-file" not in bloque
 
 
 # ══════════════════════════════════════════════════════════════════════════════
