@@ -70,6 +70,8 @@ build_one "$TMP/one.oci.tar" "$BUILDER_ONE"
 build_one "$TMP/two.oci.tar" "$BUILDER_TWO"
 ONE="$(shasum -a 256 "$TMP/one.oci.tar" | awk '{print $1}')"
 TWO="$(shasum -a 256 "$TMP/two.oci.tar" | awk '{print $1}')"
+printf 'OCI build comparison: first=%s second=%s revision=%s platform=%s\n' \
+  "$ONE" "$TWO" "$VCS_REF" "$PLATFORM"
 [ "$ONE" = "$TWO" ] || {
   echo "NON-REPRODUCIBLE: first=$ONE second=$TWO" >&2; exit 1;
 }

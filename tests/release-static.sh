@@ -67,6 +67,11 @@ spec = importlib.util.spec_from_file_location("release_provenance", provenance_p
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 materials = module.dockerfile_base_materials(root / "Dockerfile")
+gate_spec = importlib.util.spec_from_file_location("artefacto_gate", root / "tools/artefacto-gate.py")
+gate = importlib.util.module_from_spec(gate_spec)
+gate_spec.loader.exec_module(gate)
+assert gate.materiales_dockerfile(root / "Dockerfile") == {
+    item["uri"]: item["digest"]["sha256"] for item in materials}
 assert len(materials) == len(froms)
 for image, material in zip(froms, materials):
     reference, digest = image.rsplit("@sha256:", 1)
@@ -83,6 +88,8 @@ with tempfile.TemporaryDirectory() as scratch:
     fixture = pathlib.Path(scratch) / "Dockerfile"
     fixture.write_text(f"FROM {froms[0]} AS first\nFROM {froms[0]}\n")
     assert module.dockerfile_base_materials(fixture) == [materials[0]]
+    assert gate.materiales_dockerfile(fixture) == {
+        materials[0]["uri"]: materials[0]["digest"]["sha256"]}
     reference, digest = froms[0].rsplit("@sha256:", 1)
     other_digest = ("0" if digest[0] != "0" else "1") + digest[1:]
     fixture.write_text(f"FROM {froms[0]} AS first\nFROM {reference}@sha256:{other_digest}\n")
@@ -92,6 +99,12 @@ with tempfile.TemporaryDirectory() as scratch:
         assert "conflicting digests" in str(exc)
     else:
         raise AssertionError("different digests for one base reference were accepted")
+    try:
+        gate.materiales_dockerfile(fixture)
+    except ValueError as exc:
+        assert "conflicting digests" in str(exc)
+    else:
+        raise AssertionError("artifact verifier accepted conflicting base digests")
 print(f"static release chain: {len(uses)} Actions by SHA, {len(packages)} Python pins with hashes")
 PY
 
