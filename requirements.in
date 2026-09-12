@@ -1,0 +1,18 @@
+# Dependencias de RUNTIME del servicio. Fuente de verdad de `requirements.lock`.
+#
+# Antes vivían inline en el `Dockerfile` con rangos abiertos
+# (`fastapi==0.121.*`, `uvicorn[standard]==0.39.*`, `pydantic==2.*`): `pydantic`
+# flotaba en TODO el 2.x, así que dos builds del mismo commit podían no ser la misma
+# imagen. Las versiones exactas son las que el artefacto auditado ya tenía dentro
+# (medido con `importlib.metadata` en el contenedor: fastapi 0.121.3, uvicorn 0.39.0,
+# pydantic 2.13.4, starlette 0.50.0), así que esto CONGELA lo que ya corría; no
+# actualiza nada de tapadillo.
+#
+# Regenerar (dentro de la MISMA base por digest, para que la resolución sea la del
+# artefacto y no la del portátil de quien lo corre):
+#   docker run --rm -v "$PWD:/w" -w /w python@sha256:<digest de Dockerfile> \
+#     sh -c 'pip install -q uv && uv pip compile --generate-hashes --no-header \
+#            requirements.in -o requirements.lock'
+fastapi==0.121.3
+uvicorn[standard]==0.39.0
+pydantic==2.13.4

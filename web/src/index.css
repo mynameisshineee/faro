@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+/* Papel cálido, tinta oscura, y el acento en un solo sitio. El tema por defecto es
+   CLARO: una bandeja se lee de día y en pantalla compartida, y el oscuro le daba a
+   la interfaz aire de consola de log — que es justo lo que este producto intenta
+   dejar de ser. El tono de identidad por agente se calcula aparte (`tono`); estos
+   tokens sólo ponen el suelo para que esos tonos no compitan con nada. */
+@theme {
+  --color-papel:   #FBFAF7;
+  --color-panel:   #FFFFFF;
+  --color-alzado:  #F4F2ED;
+  --color-linea:   #E6E2DA;
+  --color-tinta:   #1A1917;
+  --color-apagado: #6B6862;
+  /* Contraste WCAG AA verificado por cálculo de luminancia, no por vista.
+     Los tres valores de abajo FALLABAN y estaban ya publicados:
+       --tenue  2.78:1 sobre papel (horas y metadatos — texto que sí se lee)
+       --aviso  4.49:1 (marcas REQUEST/HELD, de 10px: falla en la práctica)
+       --lacre  4.00:1 sobre --lacre-d (ficha de difusión)
+     Corregidos conservando el tono. El modo oscuro pasaba los tres. */
+  --color-tenue:   #76726B;
+  --color-lacre:   #9C5C1B;
+  --color-lacre-d: #F6EBDF;
+  --color-bien:    #2E7D53;
+  --color-aviso:   #98690F;
+  --color-mal:     #B03445;
+  /* Ficha de mención (@alguien). NEUTRA a propósito: las menciones son constantes
+     en texto de agentes y una ficha de color en cada una convierte el párrafo en
+     un semáforo. El color se reserva para la identidad de quien escribe. */
+  --color-mencion:   #ECEAE4;
+  --color-mencion-t: #4A463F;
+  --radius-fila:   9px;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Contrato de motion (design brief §4.3): terminal-adyacente, no coreografiado.
+     3 valores, nunca literales sueltos en un componente. */
+  --motion-duration-quick:  120ms;  /* hover, press — fila, botón */
+  --motion-duration-normal: 180ms;  /* expandir/colapsar cuerpo ("ver más") */
+  --motion-duration-drawer: 220ms;  /* menú móvil, entrada/salida */
+  --motion-ease-standard: cubic-bezier(.2, 0, 0, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* BUG real cazado en verificación (no en `ui.html`, sólo aquí): un `@theme` anidado
+   dentro de este `@media` se compila SIN el `@media` — Tailwind v4 funde todos los
+   bloques `@theme` en un único `:root` de build, así que el oscuro (declarado
+   después) ganaba SIEMPRE y el claro desaparecía del CSS servido, en dev y en
+   producción. `@theme` declara el token; el override de tema es CSS de runtime
+   normal — un `:root` a secas dentro del `@media`, no otro `@theme`. */
+/* Tono de identidad por agente (ver `Firma.tsx`). Van como tokens y no dentro del
+   componente porque cada tema necesita su pareja: en claro la ficha es un lavado
+   claro con texto oscuro, y en oscuro al revés. Comprobado por cálculo sobre los
+   360 tonos: peor caso 5,90:1 en claro y 8,10:1 en oscuro. */
+:root {
+  --firma-l-fondo: .94; --firma-c-fondo: .045;
+  --firma-l-texto: .44; --firma-c-texto: .115;
+}
+
+/* BUG real cazado en verificación (no en `ui.html`, sólo aquí): un `@theme` anidado
+   dentro de este `@media` se compila SIN el `@media` — Tailwind v4 funde todos los
+   bloques `@theme` en un único `:root` de build, así que el oscuro (declarado
+   después) ganaba SIEMPRE y el claro desaparecía del CSS servido, en dev y en
+   producción. `@theme` declara el token; el override de tema es CSS de runtime
+   normal — un `:root` a secas dentro del `@media`, no otro `@theme`. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* El fondo era #14140F, un negro oliva, con el acento en ámbar: leído junto a
+       la monoespaciada de todas las filas, el conjunto daba «consola de log» —
+       exactamente lo que este producto intenta dejar de ser, y lo primero que se
+       dijo de él al verlo. El suelo pasa a un negro AZULADO y el texto se queda
+       cálido: sigue siendo papel, de noche. Los siete valores comprobados por
+       luminancia sobre el fondo nuevo (peor: --tenue a 4,55:1). */
+    --color-papel: #15161A; --color-panel: #1B1D22; --color-alzado: #22252B;
+    --color-linea: #2E323A; --color-tinta: #E9E7E2; --color-apagado: #A0A5AE;
+    --color-tenue: #7A808A; --color-lacre: #E3A75A; --color-lacre-d: #33291A;
+    --color-bien: #6DC095; --color-aviso: #E3A75A; --color-mal: #EE7C86;
+    --color-mencion: #2B2F37; --color-mencion-t: #C7CBD3;
+    --firma-l-fondo: .32; --firma-c-fondo: .055;
+    --firma-l-texto: .86; --firma-c-texto: .085;
+  }
+}
+
+html, body, #root { height: 100%; }
+body {
+  background: var(--color-papel);
+  color: var(--color-tinta);
+  /* Tipografía de TEXTO, no de terminal. La monoespaciada queda para lo que de
+     verdad es dato: horas, contadores, coordenadas y cuerpos que son código. */
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}

@@ -1,0 +1,51 @@
+# Inicializador EXPLÍCITO del frame key. Mismo project name y volumen que el
+# piloto; no forma parte de `up` y no tiene red. El bind del host sólo entra en
+# este proceso acotado: el gateway ve después únicamente el volumen nombrado ro.
+name: llminbox-pilot-m1
+
+services:
+  projector-key-init:
+    build: .
+    restart: "no"
+    user: "0:0"
+    network_mode: "none"
+    entrypoint: ["python3", "/app/tools/pilot_key_init.py"]
+    environment:
+      LLMINBOX_SECRET_UID: "${LLMINBOX_SECRET_UID:-1000}"
+      LLMINBOX_SECRET_GID: "${LLMINBOX_SECRET_GID:-1000}"
+      LLMINBOX_SECRET_TARGET_DIR: /run/projector
+      LLMINBOX_SECRET_TARGET_NAME: frame.key
+    volumes:
+      - "${LLMINBOX_PILOT_PROJECTOR_FRAME_KEY_HOST:?fichero frame key 0600}:/source/secret:ro"
+      - llminbox-pilot-projector-key:/run/projector
+      - ./tools:/app/tools:ro
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE"]
+    security_opt: ["no-new-privileges:true"]
+
+  pepper-init:
+    build: .
+    restart: "no"
+    user: "0:0"
+    network_mode: "none"
+    entrypoint: ["python3", "/app/tools/pilot_key_init.py"]
+    environment:
+      LLMINBOX_SECRET_UID: "${LLMINBOX_SECRET_UID:-1000}"
+      LLMINBOX_SECRET_GID: "${LLMINBOX_SECRET_GID:-1000}"
+      LLMINBOX_SECRET_TARGET_DIR: /run/pepper
+      LLMINBOX_SECRET_TARGET_NAME: journal.pepper
+    volumes:
+      - "${LLMINBOX_PILOT_PEPPER_HOST:?fichero pepper 0600}:/source/secret:ro"
+      - llminbox-pilot-pepper:/run/pepper
+      - ./tools:/app/tools:ro
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE"]
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  llminbox-pilot-projector-key:
+  llminbox-pilot-pepper:

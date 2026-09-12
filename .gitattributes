@@ -1,0 +1,111 @@
+# Preserve collected upstream license bytes across checkout platforms.
+third_party/licenses/** -text
+# This upstream text ends its last line with one space; retain the verified hash.
+third_party/licenses/py/httptools/vendor/http-parser/LICENSE-MIT whitespace=-blank-at-eol
+
+# ── QUÉ NO VIAJA EN EL TARBALL PUBLICABLE ────────────────────────────────────
+# Ruling de producto (@cpo, 2026-09-09): el artefacto del 1.0 es la imagen OCI y el
+# tarball de `git archive`; el repositorio NO es el artefacto. Y de lo que sí viaja se
+# excluyen dos árboles, con una distinción que importa más que la regla:
+# NO SE PUBLICAN **Y NO SE BORRAN**. Siguen íntegros aquí; sólo no salen del artefacto.
+# Borrarlos para poner un gate en verde está prohibido por el mismo ruling.
+#
+#   docs/evidence/  el RECIBO de nuestras corridas. Lo que acredita a un lector externo
+#                   es el gate que ÉL puede correr —`tests/`, `tools/`, el checklist—,
+#                   no el log de que lo corrimos nosotros.
+#   fleet/          el censo de los agentes que operan esta instalación. No es producto:
+#                   es la topología del operador.
+#
+# Falsador (⊕ y ⊖, los dos, o esto no acredita nada):
+#   ⊖  git archive HEAD | tar -tf - | grep -cE '^(docs/evidence|fleet)(/|$)'   ->  0
+#      La frontera `(/|$)` NO es adorno: sin ella la aguja se traga `fleet_deadline_runner.py`,
+#      un fichero de raiz que SI viaja y que no tiene nada que ver. Con `/` al final se pierde
+#      la entrada de directorio; sin nada, sobra un fichero ajeno. La frontera de SEGMENTO es
+#      la unica forma que mide lo que la regla dice.
+#      (la ruta va SIN barra final a proposito: con `/**` a secas el contenido se excluye
+#       pero la ENTRADA DE DIRECTORIO vacia sigue viajando, y un `docs/evidence/` vacio en
+#       un tarball publicado sigue diciendo que ese directorio existe. Por eso van las dos
+#       formas, la ruta y el glob.)
+#   ⊕  la misma corrida:  grep -c '^servicio.py$'                          ->  1
+#      sin el ⊕, un tarball vacío o roto también daría 0 y parecería correcto.
+docs/evidence   export-ignore
+docs/evidence/** export-ignore
+fleet           export-ignore
+fleet/**         export-ignore
+
+# Los documentos operativos se excluyen por clase, también antes de existir.
+# Alcance: raíz y docs/. Se conservan las exclusiones concretas históricas.
+/HANDOFF* export-ignore
+/COORDINACION* export-ignore
+/FREEZE* export-ignore
+/BLOQUE-SIGUIENTE* export-ignore
+/CANDIDATO* export-ignore
+/docs/HANDOFF* export-ignore
+/docs/COORDINACION* export-ignore
+/docs/FREEZE* export-ignore
+/docs/BLOQUE-SIGUIENTE* export-ignore
+/docs/CANDIDATO* export-ignore
+
+# ── EL REGISTRO DE PROCEDENCIA (ítem 5.2) NO VIAJA ──────────────────────────
+# RULING de @contratosbik (2026-09-11, fila 8 re-escrita): el 5.2 pide que la procedencia
+# esté DOCUMENTADA y cubierta por un registro ESCRITO — no que VIAJE. Y el registro nombra
+# buzones de personas físicas: publicarlos no es necesario para lo que el registro hace
+# (RGPD 5.1.c). Vive VERSIONADO en el repo de trabajo y EXCLUIDO de toda superficie
+# publicada. Hacen falta las TRES exclusiones, porque ninguna cubre a las otras:
+#   OSS-MANIFEST.txt   no se añade (el artefacto OSS sale del manifiesto)
+#   .gitattributes     esta línea (el tarball de `git archive` SÍ lleva los .md de raíz)
+#   Dockerfile         nada: copia POR NOMBRE, no hay `COPY .`
+#
+# Falsador del MECANISMO, corrido en repo sintético con este mismo .gitattributes:
+#   ⊖ sin la línea:  git archive | tar -t | grep -c '^PROVENANCE.md$'  ->  1
+#   ⊕ con la línea:                                                    ->  0
+#   ⊕ control: otro .md de raíz sigue viajando -> 1 (la regla es específica, no un bloqueo)
+# ⚠️ `export-ignore` gobierna UNA superficie (el tarball). No exime de nada más: si un día
+# el fichero entrara en el manifiesto, se publicaría igual (medido por @infra, 19:23Z).
+PROVENANCE.md export-ignore
+
+# ── LO QUE EL MANIFIESTO NO DECLARA, NO VIAJA ───────────────────────────────
+# Ruling de producto (2026-09-11): un solo censo para los dos vehículos — el
+# artefacto se construye del manifiesto y el tarball se construía con `git archive`,
+# que no lo miraba. Medido ese día: 35 ficheros viajaban en el tarball sin estar
+# declarados. Ninguno lo había decidido nadie: viajaban por omisión.
+# De esos 35, uno se DECLARA (OSS-MANIFEST.txt, que ahora está en la lista porque
+# permite comparar el conjunto declarado con el que realmente viaja). Los otros
+# 34 no viajan — y NO se borran: siguen íntegros en el repo de trabajo.
+#
+# Falsador, y es un gate corrible: tools/tarball-vs-manifiesto.sh <ref> -> rc=0.
+# Sobre el commit anterior a estas líneas da rc=1 y los lista.
+_shared_refs/LEEME.md export-ignore
+BLOQUE-SIGUIENTE-D15.md export-ignore
+CANDIDATO-native-core-db26a32.md export-ignore
+docs/ACK-FOLLOWUP-2026-09-08.md export-ignore
+docs/ADR-002-FLEET-CONTROL-PLANE.md export-ignore
+docs/AGENT-OS-v0.3.md export-ignore
+docs/FLEET-DEADLINES.md export-ignore
+docs/FLEET-MANIFEST-16.md export-ignore
+docs/FLEET-ROLLOUT-V0.9.md export-ignore
+docs/M2-CI-CHECKLIST.md export-ignore
+docs/M2-LIFECYCLE-V3-COMPOSITION.md export-ignore
+docs/M2-LIFECYCLE-V4-FREEZE.md export-ignore
+docs/M2-LIFECYCLE-V5-FREEZE.md export-ignore
+docs/M2-SCHEMA-V4-INTEGRATION.md export-ignore
+docs/M4-PILOT-ACTIVACION-NATIVA.md export-ignore
+docs/M4-PILOT.md export-ignore
+docs/OPS-INCIDENT-2026-09-07-LIVE-INDEXER.md export-ignore
+docs/SCHEMA-V7-RUNTIME-RECOVERY-CONTRACT.md export-ignore
+docs/V1.0-CLAUDE-FLEET-CONTINUATION-SPEC.md export-ignore
+docs/V1.0-EXECUTION.md export-ignore
+docs/V1.0-GATE-STATUS.md export-ignore
+docs/V1.0-HANDOFF-CHIEF-OF-STAFF.md export-ignore
+docs/V1.0-SCHEMA-V7-MIGRATION.md export-ignore
+FREEZE-native-core-102b404.md export-ignore
+FREEZE-native-core-1f7c9b2.md export-ignore
+FREEZE-native-core-59ad745.md export-ignore
+FREEZE-native-core-811f635.md export-ignore
+FREEZE-native-core-8b5eb51.md export-ignore
+FREEZE-native-core-a6a98a0.md export-ignore
+FREEZE-native-core-aab2080.md export-ignore
+FREEZE-native-core-c2d57a2.md export-ignore
+FREEZE-native-core-ed0333d.md export-ignore
+FREEZE-native-core.md export-ignore
+HANDOFF-M4-NATIVE-STATIC.md export-ignore

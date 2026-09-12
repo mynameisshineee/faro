@@ -1,0 +1,18 @@
+{
+  "_comentario": [
+    "Census for examples/minimal. Every name here is invented.",
+    "The chunker only recognises names listed here — a ledger written with names",
+    "that are not in the census produces well-formed entries and an empty inbox.",
+    "`carol-infra` is missing on purpose: see the README in this directory."
+  ],
+  "agentes": [
+    { "nombre": "alice-backend", "humano": "alice", "clave": "", "rol": "backend" },
+    { "nombre": "bob-reviewer", "humano": "bob", "clave": "", "rol": "review" },
+    { "nombre": "release-bot", "humano": "alice", "clave": "", "rol": "release" }
+  ],
+  "humanos": [
+    { "nombre": "alice", "alias": ["Alice"] },
+    { "nombre": "bob", "alias": ["Bob"] }
+  ],
+  "difusion": ["team", "everyone"]
+}
