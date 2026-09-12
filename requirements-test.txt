@@ -1,0 +1,19 @@
+# Fijado igual que Dockerfile (pip install fastapi/uvicorn/pydantic) — un test
+# contra versiones distintas a producción no prueba producción.
+fastapi==0.121.*
+pydantic==2.*
+# También fijados por minor (re-review×3, security): sin pin, cualquier release
+# nueva —rota o comprometida— entraba al job de CI sin aviso.
+pytest==9.1.*
+httpx==0.28.*
+# ⚠️ EL SDK DE OTel NO ESTÁ AQUÍ, Y ES A PROPÓSITO. `observability.py` no lo
+# importa a nivel de módulo: sólo lo toca dentro del sink, y sólo si alguien le
+# pasa un bundle. O sea que NO es dependencia del kernel ni del camino de
+# producción por defecto — el defecto es `not_configured`, sin SDK y sin exportar.
+# Meterlo en la base haría que 90 ficheros de test que no lo usan cargaran con él
+# y, peor, que pareciera obligatorio para arrancar el servicio. Vive en
+# `requirements-otel.txt`, que se instala a propósito. Ver ese fichero.
+# El arnés del piloto M1 lee `docker-compose.pilot.yml` como YAML. Sin esta línea
+# el job de CI no se pone rojo por un fallo: se pone rojo por COLECCIÓN
+# (`1 error during collection`), que es un rojo que no dice nada del producto.
+PyYAML==6.*

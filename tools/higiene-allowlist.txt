@@ -1,0 +1,77 @@
+# Reviewed exceptions for tools/higiene.py.
+#
+# Format:  <tracked path>:<the exact matched text>  # why this one is fine
+#
+# An entry without a written reason is ignored on purpose. "Someone added it once"
+# is how an allowlist turns into the thing it was meant to prevent.
+
+NOTICE:biklabs.ai  # the licensor's own URL; Apache-2.0 §4(d) requires this NOTICE to travel intact
+NOTICE:biklabs  # inside the licensor's own URL in a file whose text Apache-2.0 requires to travel intact
+servicio.py:soporte@anthropic.com  # sample address inside a code comment explaining that an @ is not a person
+tests/pytest/test_arrobas_que_no_llegan.py:soporte@anthropic.com  # fixture text for that exact test
+tests/pytest/test_build_declara_su_procedencia.py:tests@llminbox.invalid  # RFC 2606 reserved TLD, cannot resolve
+
+# ── Third-party licence texts: the address IS the notice ──────────────────────
+# MIT requires that "the above copyright notice ... shall be included in all
+# copies". The author's address sits inside that notice, so deleting it to
+# satisfy this gate would breach the licence the file exists to reproduce.
+# Note the trap: removing the line ALSO turns the gate green. A criterion of
+# "higiene.py rc=0" can therefore be met by the one path that is not allowed.
+# The criterion is rc=0 WITH both copyright lines still present.
+
+third_party/licenses/js/clsx/LICENSE:luke.edwards05@gmail.com  # inside clsx's MIT copyright notice, which this file exists to reproduce verbatim; deleting it breaches the licence
+third_party/licenses/py/h11/LICENSE.txt:njs@pobox.com  # inside h11's MIT copyright notice; same reason, and the notice must travel intact
+
+# ── Open decisions, not settled exceptions ────────────────────────────────────
+# Each of these is a finding that someone other than the author of this file has
+# to decide. They are listed so the gate stays usable as a gate, and printed as a
+# notice on every run so that "allowlisted" never means "invisible".
+
+ledger_parse.py:bik.eus  # code comment recording a real production incident; rewording it is the code owner's call
+tests/pytest/test_lint_correo_perdido.py:bik.eus  # fixture text asserted verbatim by the test; changing it changes the test
+web/src/lib/titular.test.mjs:bik.eus  # fixture for a real parser bug: a name containing a dot. The domain is incidental
+web/src/lib/titular.ts:bik.eus  # code comment naming the same fixture
+
+# ── This gate's own planted test cases ────────────────────────────────────────
+# tools/higiene.py is scanned like everything else. These are the ⊕ cases each
+# detector must match before the tree is read; a detector that cannot match its
+# own case and a clean tree produce the same zero. Listing them one by one is the
+# point: the previous version skipped the whole file, which is a blind spot by
+# construction and does not appear in any count.
+
+tools/higiene.py:sv_abcdefghij1234567890  # planted case for the secret-token detector, not a token
+tools/higiene.py:arn:aws:  # planted case for the AWS detector
+tools/higiene.py:BEGIN RSA PRIVATE KEY  # planted case for the private-key detector
+tools/higiene.py:/Users/someone  # planted case for the absolute-path detector
+tools/higiene.py:10.1.0.1  # planted case for the private-IP detector
+tools/higiene.py:someone@example.org  # planted case for the email detector, RFC 2606 reserved domain
+tools/higiene.py:biklabs.ai  # planted case for the first-party-domain detector; the detector needs a real one to match
+
+# ── Fixtures of the OSS gates (added when the gate started seeing untracked files)
+# Until this run these lines were invisible: the gate listed only tracked files, so
+# anything not yet `git add`ed passed. Six findings appeared the moment that was
+# fixed, all of them in files written the same day.
+
+tests/contexto-build.sh:sv_no_debe_viajar_0123456789  # planted decoy string; the test's whole job is that it does NOT reach the build context
+tests/gates-oss.sh:release@llminbox.invalid  # RFC 2606 reserved TLD, identity of the throwaway signing key
+tools/materializa-oss.sh:release@llminbox.invalid  # RFC 2606 reserved TLD, identity of the single commit the materialised artefact is given; same case as the line above
+tests/gates-oss.sh:otro@llminbox.invalid  # RFC 2606 reserved TLD, the deliberately foreign key
+tools/artefacto-gate.py:/Users/alguien  # example inside a comment explaining why a trust path may not point outside the repo
+
+docs/AGENT-OS-v0.3.md:bik.eus  # whole file is pending a publish/remove decision — the gate calls it dead when it runs INSIDE the published artefact (the file is not there), and alive when it runs over the work tree, which is where it lives. Not dead: out of scope.
+
+# ── NOMBRES DE PERSONA EN DATOS DE TEST (clase b) ────────────────────────────
+# La regla de producto los anonimiza antes de publicar. En estos ficheros el nombre
+# NO es prosa: es el VALOR del principal humano en el roster que el test construye,
+# así que renombrarlo cambia datos y aserciones a la vez. El renombrado a `OPERADOR`
+# es de @qa/@sdet (ruling de producto 2026-09-11: «es un DATO, no una frase»), y además
+# hoy no se puede verificar: el aborto de capacidad impide correr la suite que los usa. Estas excepciones se imprimen en CADA corrida y
+# desaparecen con el renombrado — si siguen aquí dentro de una semana, alguien se olvidó.
+# La prosa del producto (servicio.py · llmi · ledger_parse.py · docs) ya está curada:
+# 24 líneas, 0 menciones restantes.
+
+tools/higiene.py:Albert  # planted case for the person-name detector; the detector needs a real one to match, and this file is where every detector keeps its own ⊕
+tools/higiene.py:Alberto  # the person-name detector's own pattern line: the regex has to spell the names it looks for, and this file is where every detector keeps its ⊕
+tools/higiene.py:[PENDIENTE[^]  # the placeholder detector's own pattern line and planted case: the regex has to spell the forms it looks for, and the planted case must BE one
+tools/higiene.py:[pendiente: ciudad del domicilio social]  # the placeholder detector's own pattern line and planted case: the regex has to spell the forms it looks for, and the planted case must BE one
+tests/test_higiene_superficie.py:fixture@example.invalid  # reserved .invalid identity used only for commits in disposable publication fixtures, never the operator identity

@@ -1,0 +1,13 @@
+# Los ajustes de pnpm viven AQUÍ, no en package.json: las versiones recientes ya no
+# leen el campo `pnpm` de package.json y lo ignoran con un aviso — el build de la
+# imagen fallaba por eso mientras en local funcionaba, porque la pnpm del contenedor
+# era más nueva que la mía.
+onlyBuiltDependencies:
+  # esbuild necesita su script de post-instalación para bajar el binario nativo.
+  - esbuild
+overrides:
+  # pnpm rechaza paquetes publicados hace menos de ~24 h (minimumReleaseAge), como
+  # defensa de cadena de suministro. Esta versión salió el mismo día y tumbaba el
+  # build. Se fija la anterior en vez de relajar la política: la protección vale más
+  # que estar al día en una dependencia transitiva de browserslist.
+  baseline-browser-mapping: 2.11.4

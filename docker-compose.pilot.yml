@@ -1,0 +1,168 @@
+# Topología MÍNIMA del piloto M1 (ADR-001) — FICHERO APARTE, y el porqué importa.
+#
+# No toca `docker-compose.yml`: ese fichero lo reescriben `m4-pilot` (+20) y
+# `m5-oss` (+5/−1), y `m4 × m5` ya choca en `Dockerfile`, `.gitignore` y
+# `requirements.lock`. Meter aquí una línea más sería fabricar un cuarto choque
+# para probar una hipótesis. Esto se levanta con `-f docker-compose.pilot.yml` y
+# se borra sin dejar rastro en la composición de la flota.
+#
+# Tampoco hereda los 12 ledgers de la flota, que es el punto: el piloto existe
+# para probar que el aislamiento lo hace la TOPOLOGÍA, no el buen juicio de nadie.
+#
+# ⚠️ NADA aquí se despliega en esta entrega. Se valida en estático
+#    (`tests/pilot/test_topologia.py` + `docker compose config`, los dos en CI).
+
+name: llminbox-pilot-m1
+
+services:
+
+  # ── EL GATEWAY: lo único que toca journal, credenciales y ledgers ───────────
+  gateway:
+    build: .
+    container_name: llminbox-pilot-gateway
+    # `no`, no `unless-stopped`, Y ES DELIBERADO. El ADR pide un arranque
+    # fail-closed; con reinicio automático, un fail-closed se convierte en un
+    # crashloop —11 reinicios medidos en este repo por una ruta de credencial mal
+    # pasada— y la flota lee «el servicio va y viene» en vez de «el preflight dice
+    # que no». Un fallo de precondición tiene que quedarse QUIETO y visible.
+    restart: "no"
+    ports: ["127.0.0.1:${LLMINBOX_PILOT_PORT:-8099}:8077"]
+    # El preflight corre ANTES de uvicorn y con `&&`: si dice rojo, no hay proceso
+    # que sirva. Ponerlo detrás lo convertiría en un aviso.
+    entrypoint: ["/bin/sh", "-c",
+                 "python3 /app/tools/pilot_preflight.py && exec uvicorn servicio:app --host 0.0.0.0 --port 8077 --log-level warning"]
+    environment:
+      # ── El journal, en su volumen y con su identidad ────────────────────────
+      LLMINBOX_JOURNAL: /journal/coordination.sqlite
+      # Qué volumen se espera. Sin esto, un volumen NUEVO y VACÍO con el nombre
+      # correcto pasa la comprobación de «está en el volumen durable»: el nombre lo
+      # decide el project name y el 04-09 nació uno así por un `compose` crudo.
+      LLMINBOX_JOURNAL_VOLUME_ID: "${LLMINBOX_JOURNAL_VOLUME_ID:?genera uno con `python3 tools/pilot_preflight.py --genera-id`}"
+      # La HUELLA del testigo, que nace en el estreno y NO la elige el operador.
+      # Sin ella el testigo sólo repite el id del entorno y dos volúmenes
+      # estrenados con el mismo id salen los DOS verdes — el caso split-brain, que
+      # es justo donde la detección de montaje cruzado tiene que servir. El primer
+      # `--init` la imprime.
+      LLMINBOX_JOURNAL_VOLUME_WITNESS: "${LLMINBOX_JOURNAL_VOLUME_WITNESS:?la imprime el primer --init}"
+      # ── El pepper, por FICHERO. Por entorno lo lee `docker inspect`. ────────
+      LLMINBOX_PEPPER_FILE: /run/pepper/journal.pepper
+      # ── El mapa y su atestado ───────────────────────────────────────────────
+      LLMINBOX_CREDENCIALES: /credenciales/mapa.json
+      LLMINBOX_CREDENCIALES_SHA: "${LLMINBOX_PILOT_CREDENCIALES_SHA:?sha256 del mapa que despliegas}"
+      # El mapa V8 no puede validarse contra un censo vacío. El piloto anterior
+      # no montaba roster alguno y por ello jamás había arrancado de verdad.
+      LLMINBOX_ROSTER: /state/roster.json
+      # ── Ledgers: UNO escribible, y se dice cuál ─────────────────────────────
+      LLMINBOX_LEDGER_PILOTO: /ledgers/llminbox
+      # El ledger RW también lleva testigo, y la asimetría anterior no tenía
+      # motivo: contar CUÁNTOS son escribibles no dice CUÁL, y la ruta del host
+      # llega por entorno sin que nadie la valide. Un directorio cualquiera
+      # montado en su sitio pasaba en verde.
+      LLMINBOX_LEDGER_PILOTO_ID: "${LLMINBOX_LEDGER_PILOTO_ID:?identidad del ledger del carril piloto}"
+      LLMINBOX_LEDGER_PILOTO_WITNESS: "${LLMINBOX_LEDGER_PILOTO_WITNESS:?la imprime el primer --init}"
+      LLMINBOX_LEDGERS: "llminbox=/ledgers/llminbox/LEDGER.md,testigo=/ledgers/testigo/LEDGER.md"
+      LLMINBOX_DB: /data/llminbox.sqlite
+      # TOKEN PROPIO DEL PILOTO, y la variable es OTRA a propósito: con
+      # `${LLMINBOX_TOKEN}` el token de la flota entraría solo, heredado del
+      # entorno de quien despliega. Su portador dispara el fail-open de
+      # `exige_ser` (servicio.py:3494-3496) —sin identidad, anota y deja pasar—,
+      # que es exactamente la escritura anónima que este piloto existe para
+      # prohibir. Frontera en docs/PILOT-M1-TOPOLOGY.md.
+      LLMINBOX_TOKEN: "${LLMINBOX_PILOT_TOKEN:?token propio del piloto, distinto del de la flota}"
+      # C3 instala el mecanismo apagado. La activación cambia atómicamente el
+      # entrypoint y este valor; después, volver a `bridge` es el rollback
+      # conductual de una sola línea sin desmontar el root.
+      LLMINBOX_LEGACY_MUTATION_POLICY: "bridge"
+      LLMINBOX_CARRIL_OBLIGATORIO: "1"
+      LLMINBOX_POLL: "${LLMINBOX_POLL:-30.0}"
+    volumes:
+      # EL JOURNAL: volumen NOMBRADO PROPIO. Separado del índice a propósito —
+      # el índice es derivado y su doctrina escrita dice que se puede borrar
+      # («si el volumen se pierde, se reconstruye en unos segundos»); el journal
+      # es el primer estado de llminbox SIN camino de reconstrucción. Compartir
+      # volumen los pone bajo la misma cuota, el mismo `ENOSPC` y la misma frase.
+      - llminbox-pilot-journal:/journal
+      - llminbox-pilot-index:/data
+      # EL LEDGER DEL CARRIL PILOTO — el ÚNICO RW de todo el despliegue.
+      - "${LLMINBOX_PILOT_LEDGER_HOST:?directorio del ledger del carril piloto}:/ledgers/llminbox"
+      # UN SEGUNDO LEDGER, `ro`, Y NO ES RELLENO: sin él, el control negativo de
+      # carril cruzado no tiene contra qué correr y su verde lo firmaría la
+      # ausencia del montaje, no la autorización.
+      - "${LLMINBOX_PILOT_LEDGER_TESTIGO_HOST:?segundo ledger para el control negativo}:/ledgers/testigo:ro"
+      - "${LLMINBOX_PILOT_MAPA_HOST:?mapa de credenciales del piloto}:/credenciales/mapa.json:ro"
+      - "${LLMINBOX_PILOT_ROSTER_HOST:?roster del piloto}:/state/roster.json:ro"
+      - llminbox-pilot-pepper:/run/pepper:ro
+      # El preflight vive en el repo y la imagen base no lo copia. Montarlo `ro`
+      # evita tocar el `Dockerfile`, que es superficie de `m4`/`m5`. En imagen de
+      # release esto es un `COPY` — declarado como hueco, no como diseño.
+      - ./tools:/app/tools:ro
+    healthcheck:
+      # La sonda corre EL MISMO preflight: un healthcheck que sólo mira el HTTP
+      # marca `healthy` con el journal ausente o el pepper equivocado, porque el
+      # proceso contesta igual. `--readiness` no escribe.
+      test: ["CMD", "python3", "/app/tools/pilot_preflight.py", "--readiness"]
+      interval: 30s
+      timeout: 5s
+      # 🩸 `retries: 1` y NO `2`, y el motivo es que `retries` NO gobierna el corte.
+      # Hallazgo de @security: `readiness()` corta al PRIMER rojo —manda `SIGTERM`
+      # al PID 1— sin contador ni estado; `retries` sólo gobierna la ETIQUETA
+      # `unhealthy`. Con `2` el fichero declaraba una tolerancia a fallos
+      # transitorios QUE NO EXISTE, y con `restart: "no"` al lado el piloto se
+      # queda caído hasta que un humano lo mire.
+      # Se alinea la declaración con la conducta en vez de inventar un contador:
+      # cortar al primer rojo real es lo que se decidió y sigue en pie; lo que no
+      # puede seguir es que el compose prometa otra cosa.
+      retries: 1
+      start_period: 20s
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    # ── I13 · endurecimiento. Este servicio TOCA el estado del piloto, así que
+    #    lleva lo mismo que el `agente`, que no toca nada y lo llevaba desde el
+    #    principio. Hallazgo de @security: el endurecimiento estaba INVERTIDO
+    #    respecto al radio de daño.
+    #    ⚠️ `read_only` congela el sistema de ficheros de LA IMAGEN. Los volúmenes
+    #    (`/journal`, `/data`, `/ledgers/llminbox`) se siguen escribiendo igual.
+    #    ⚠️ PRECONDICIÓN NUEVA que trae `user:` — léela antes del primer arranque:
+    #       los volúmenes nombrados nacen `root:root` y un proceso uid 1000 no
+    #       puede escribir en ellos. Antes del PRIMER estreno, alinea la propiedad:
+    #         docker run --rm -v llminbox-pilot-m1_llminbox-pilot-journal:/v \
+    #           alpine chown -R 1000:1000 /v
+    #         docker run --rm -v llminbox-pilot-m1_llminbox-pilot-index:/v \
+    #           alpine chown -R 1000:1000 /v
+    #         chown -R 1000:1000 "$LLMINBOX_PILOT_LEDGER_HOST"     # bind del host
+    #       Si no se hace, el estreno falla CERRADO con un `EACCES` con nombre —no
+    #       corrompe nada—, y ése es el lado bueno del error.
+    read_only: true
+    tmpfs: ["/tmp"]
+    user: "1000:1000"
+
+  # ── EL AGENTE: cero ledgers, cero home, cero socket, cero journal ───────────
+  agente:
+    # Por etiqueta y no por digest A PROPÓSITO: el anclaje por digest ya está
+    # escrito en `m4-pilot` (dos bases + `--require-hashes`) y esta entrega tiene
+    # prohibido tocar M4. Repetirlo aquí sería fabricar una divergencia.
+    image: python:3.13-slim
+    container_name: llminbox-pilot-agente
+    restart: "no"
+    # SIN `volumes:`. No es que estén todos en `ro`: es que NO HAY. Un agente que
+    # puede leer un ledger no necesita pedir autoridad, y entonces el piloto no
+    # prueba nada — la frontera sería el buen juicio del proceso, no el montaje.
+    environment:
+      # Lo único que se le da: dónde está la puerta y con qué se identifica. La
+      # credencial de arranque es SUYA y distinta de la del gateway.
+      LLMINBOX_API: http://gateway:8077
+      LLMINBOX_CREDENCIAL: "${LLMINBOX_PILOT_AGENTE_CREDENCIAL:?credencial del agente piloto}"
+    command: ["python3", "-c", "import time; print('agente piloto en pie: sin ledgers, sin home, sin socket, sin journal', flush=True); time.sleep(3600)"]
+    depends_on: {gateway: {condition: service_healthy}}
+    read_only: true
+    tmpfs: ["/tmp"]
+    user: "1000:1000"
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  # Volúmenes separados: el borrado por nombre no es el
+  # único modo de fallo de un volumen, y un `ENOSPC` no discrimina por nombre.
+  llminbox-pilot-journal:
+  llminbox-pilot-index:
+  llminbox-pilot-pepper:
