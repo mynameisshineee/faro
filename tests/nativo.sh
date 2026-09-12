@@ -5,9 +5,9 @@
 # cliente existe para distinguir —OK · RECHAZO · AMBIGUO · SIN_ENVIO— son justo los
 # que un servidor real no te deja provocar cuando quieres. Y el que más importa,
 # AMBIGUO, es el que decide si se DUPLICA un efecto: probarlo "cuando toque" es no
-# probarlo nunca. Además la pasarela nativa NO EXISTE en esta base (medido en
-# 485d2db: /sessions /whoami /events /receipts /leases ⇒ 0 rutas, ⊕ control /inbox ⇒ 2),
-# así que un test contra servidor real probaría que hoy no hay servidor: otra cosa.
+# probarlo nunca. Aquí se clasifica el transporte con respuestas controladas;
+# la integración con el gateway real se prueba en tests/native_gateway y en
+# la prueba de composición que CI ejecuta antes de este arnés.
 #
 # 🔑 Cada prueba trae su control. Una guarda que dice «mal» a todo tampoco sirve, y un
 #    ⊖ que vive DENTRO del mecanismo roto da el mismo resultado que el bueno y no
