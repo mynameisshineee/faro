@@ -123,7 +123,12 @@ def test_base_v6_rechazada_bytes_intactos(tmp_path, capsys):
 # ── 3 · fichero sin sello: initialize() no decide por el CLI ───────────────
 def test_base_sin_sello_rechazada(tmp_path, capsys):
     db = tmp_path / "coordination.sqlite"
-    sqlite3.connect(db).close()         # sqlite válida, SIN esquema ni sello
+    # connect/close deja CERO bytes, que el preflight rechaza antes de leer
+    # un sello. VACUUM materializa una SQLite válida y vacía, sin tablas.
+    con = sqlite3.connect(db)
+    con.execute("VACUUM")
+    con.close()
+    assert db.stat().st_size > 0
     antes = _sha(db)
     f = _ficheros(tmp_path, _organigrama())
     f["db"] = db

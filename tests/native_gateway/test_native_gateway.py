@@ -478,7 +478,8 @@ def test_todas_las_excepciones_del_journal_tienen_mapeo_explicito():
     # v7 añade snapshot obligatorio y conflictos de observación/organización/
     # recovery. Cada clase exige su propia fila; heredar una captura genérica
     # no acredita el código público de una subclase.
-    assert len(classes) == 40
+    # G8 añade una restricción explícita del modo de apertura del Journal.
+    assert len(classes) == 41
     assert classes == mapped
     base = G._journal_error(C.JournalError("sensitive internals"))
     assert base.status_code == 500
@@ -487,6 +488,8 @@ def test_todas_las_excepciones_del_journal_tienen_mapeo_explicito():
 
 @pytest.mark.parametrize("exception,code,status,message", [
     (C.MigrationSnapshotRequired, "MIGRATION_SNAPSHOT_REQUIRED", 503,
+     "journal no disponible"),
+    (C.OpenModeRestricted, "JOURNAL_OPEN_MODE_RESTRICTED", 503,
      "journal no disponible"),
     (C.ObservationSequenceConflict, "OBSERVATION_SEQUENCE_CONFLICT", 409,
      "operacion rechazada por el journal"),

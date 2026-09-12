@@ -27,8 +27,8 @@ sys.path.insert(0, str(ROOT))
 GATEWAY = ROOT / "native_gateway.py"
 # Gateway del snapshot Faro con las rutas de supervisión y organización integradas.
 # El gate histórico v4 sustituye ambas constantes al superponer su propio sujeto.
-GATEWAY_SHA256 = "ac3a0bc2f85e9ee729f5166d749bab34dbf30b2c649b99062245d3667745ee33"
-GATEWAY_GIT_BLOB = "75b166be094ef95c3b242be5aef73c9908935e08"
+GATEWAY_SHA256 = "683996722dbc3ec1714990533fdd1c0024807847856793939123174fdb170d94"
+GATEWAY_GIT_BLOB = "d5024b40524bdbde99578ff4fab8b0f9ed8a6745"
 if not GATEWAY.is_file():
     raise RuntimeError(
         "PRECONDICIÓN NO CUMPLIDA: native_gateway.py no está integrado; se esperaba "

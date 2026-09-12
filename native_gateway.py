@@ -531,6 +531,7 @@ _ERRORS: tuple[tuple[type[BaseException], str, int], ...] = (
     (C.CommandTransitionInvalid, "COMMAND_TRANSITION_INVALID", 409),
     (C.DeliveryConflict, "DELIVERY_CONFLICT", 409),
     (C.JournalReadOnly, "JOURNAL_READ_ONLY", 503),
+    (C.OpenModeRestricted, "JOURNAL_OPEN_MODE_RESTRICTED", 503),
     (C.SchemaTooNew, "SCHEMA_TOO_NEW", 503),
     (C.SchemaMismatch, "SCHEMA_MISMATCH", 503),
     (C.SchemaIndeterminate, "SCHEMA_INDETERMINATE", 503),
