@@ -6257,7 +6257,9 @@ def inbox(agent: str, limit: int = Query(30, ge=1, le=TOPE_INBOX),
         }
     con.close()
     if identity_scope is None:
-        # SIN IDENTIDAD NO HAY CONFIRMACIÓN QUE OFRECER — y el pie deja de anunciarla.
+        # SIN IDENTIDAD NO HAY CONFIRMACIÓN QUE OFRECER — y el pie lo declara
+        # explícitamente antes de conservar la receta legacy, si existe una receta
+        # completa que no necesite inventar un carril.
         # Antes este final era único: la MISMA respuesta que adjuntaba
         # `ack_unavailable ACK_IDENTITY_REQUIRED` anunciaba «confirmación
         # disponible» y ofrecía el sobre para POST /ack, que a quien carece de
@@ -6288,16 +6290,39 @@ def inbox(agent: str, limit: int = Query(30, ge=1, le=TOPE_INBOX),
             # (invertido) con el que el POST valida la cabecera, así que el valor
             # derivado resuelve por construcción — el pegado no puede salir 422.
             carril_pie = LEDGER_CARRIL.get(next(iter(tope)))
+        if (carril_pie is None
+                and globals().get("CARRIL_LEDGER") is not None
+                and not globals().get("CARRIL_LEDGER")
+                and not globals().get("CARRIL_OBLIGATORIO", False)):
+            # Un despliegue legacy sin mapa no tiene carril que poder inventar y
+            # `/leido` acepta precisamente el payload plano. Mantener la receta
+            # pegable aquí conserva el quick start v0.9; la línea explícita de
+            # identidad deja claro que no es un grant v1.
+            cuerpo = json.dumps({"hasta": tope}, separators=(",", ":"), ensure_ascii=False)
+            return (AVISO + _aviso_alias_mudo(_agent_pedido) + "\n" + "\n".join(out)
+                    + "\n\nconfirmación no disponible — ACK_IDENTITY_REQUIRED; "
+                      "lectura sólo, sin grant v1.\n\n"
+                      "marcar leído — pega esto tal cual:\n"
+                      "  curl -s -X POST"
+                      " -H \"X-Llminbox-Token: $(cat ~/.llminbox.token)\" \\\n"
+                      "       -H 'Content-Type: application/json' --data-binary @- \\\n"
+                      f"       http://127.0.0.1:8077/inbox/{lp.canonico(agent)}/leido <<'JSON'\n"
+                      f"{cuerpo}\n"
+                      "JSON\n")
         if carril_pie is None:
             # Restricción de #2101: el pie no imprime una cabecera cuyo valor no
             # conoce. Sin cabecera en el GET y sin UN ledger único en `tope`, no
             # hay curl a medias: se dice qué falta (salida ⒞ de #2098/#2101).
             return (AVISO + _aviso_alias_mudo(_agent_pedido) + "\n" + "\n".join(out)
+                    + "\n\nconfirmación no disponible — ACK_IDENTITY_REQUIRED; "
+                      "lectura sólo, sin grant v1."
                     + "\n\nmarcar leído: NO imprimo el curl porque me falta el carril"
                       " — vuelve a leer con la cabecera `X-Llminbox-Carril: <tu carril>`"
                       " (o `?only=<tu carril>`) y el pie sale completo.\n")
         cuerpo = json.dumps({"hasta": tope}, separators=(",", ":"), ensure_ascii=False)
         return (AVISO + _aviso_alias_mudo(_agent_pedido) + "\n" + "\n".join(out)
+                + "\n\nconfirmación no disponible — ACK_IDENTITY_REQUIRED; "
+                  "lectura sólo, sin grant v1."
                 + f"\n\nmarcar leído — pega esto tal cual:\n"
                   f"  curl -s -X POST"
                   f" -H \"X-Llminbox-Token: $(cat ~/.llminbox.token)\""
