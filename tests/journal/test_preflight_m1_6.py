@@ -495,6 +495,10 @@ def test_19_derived_a_explicit_con_el_mismo_nombre_ES_un_cambio(tmp_path):
 
 @pytest.mark.parametrize("campo", ["principal", "lane"])
 def test_20_la_migracion_nombra_QUE_contradice(tmp_path, campo):
+    """Las v1 ya no entran en la migración: el rechazo común es anterior a
+    validar cualquier contradicción de `principal` o `lane`. Ese contrato
+    fail-closed es el que se debe medir hasta que exista el migrador offline.
+    """
     from .test_migracion_v1_a_v2 import _fixture_v1
     ruta, b, s1, s2, ev, _ = _fixture_v1(tmp_path, "B")
     con = sqlite3.connect(ruta)
@@ -509,7 +513,8 @@ def test_20_la_migracion_nombra_QUE_contradice(tmp_path, campo):
     j = _abre(ruta)
     with pytest.raises(C.MigrationFailed) as exc:
         j.initialize()
-    assert f"`{campo}`" in str(exc.value), f"no dijo qué contradecía: {exc.value}"
+    assert f"durable_v=1" in str(exc.value)
+    assert "migrador offline" in str(exc.value)
     j.close()
 
 
