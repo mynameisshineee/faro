@@ -1552,8 +1552,10 @@ MUTANTES_OC = [
      '                (view.lane,)).fetchone()\n'
      '            # `SUM` sobre cero filas da NULL, no 0: sin esto, un carril vac\u00edo\n'
      '            # devolv\u00eda `None` y el primer `+` del llamante reventaba.\n'
-     '            return OutboxCounts(lane=view.lane,\n'
-     '                                pending=fila["p"] or 0, failed=fila["f"] or 0)',
+     '            pending = 0 if fila["p"] is None else fila["p"]\n'
+     '            failed = 0 if fila["f"] is None else fila["f"]\n'
+     '            return OutboxCounts(\n'
+     '                lane=view.lane, pending=pending, failed=failed)',
      '        self._tras_precheck()\n'
      '        pending = self._outbox_del_carril(token, ("pending",))\n'
      '        failed = self._outbox_del_carril(token, ("failed",))\n'
@@ -1608,8 +1610,10 @@ MUTANTES_OC = [
      ['test_el_rechazo_NO_repite_el_valor_sospechoso_en_el_mensaje']),
 
     ('MOC4-sum-nulo-sin-cero', "coordination.py",
-     '                                pending=fila["p"] or 0, failed=fila["f"] or 0)',
-     '                                pending=fila["p"], failed=fila["f"])',
+     '            pending = 0 if fila["p"] is None else fila["p"]\n'
+     '            failed = 0 if fila["f"] is None else fila["f"]',
+     '            pending = fila["p"]\n'
+     '            failed = fila["f"]',
      ['test_outbox_counts_de_un_carril_VACIO_da_CEROS_enteros_y_no_None']),
 ]
 
