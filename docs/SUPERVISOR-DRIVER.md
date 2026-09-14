@@ -64,8 +64,10 @@ explícita encima:
   autoridad. Eso se EXIGE, no se supone: el driver la adopta tras validar DOS
   cosas —el recibo COMPLETO (token, rti, autoridad, conjunto exacto de
   capacidades, generación CONSERVADA respecto del arranque y plazo parseado y
-  futuro) y un `whoami` CON EL TOKEN HIJO que confirme rti, generación
-  explícita, autoridad, capacidades y el MISMO plazo— y sólo entonces adopta
+  futuro), un `whoami` CON EL TOKEN HIJO que confirme rti, autoridad,
+  capacidades y el MISMO plazo, y `GET /runtimes/{rti}` con ese token que
+  confirme la generación durable —el `whoami` público no la expone—; sólo
+  entonces adopta
   token/rti/plazo. Adoptar significa:
   contextos y secuencias NUEVOS para el rti hijo (nonce nuevo; una secuencia
   jamás se reutiliza con identidad distinta), conservando los vínculos
@@ -79,7 +81,8 @@ explícita encima:
   libro (`sesion_terminada_sin_refresco`), sin revocación anticipada ni
   olvido. Si el recibo no se valida (campos, tipos, plazos), el plazo está
   vencido o no cuadra recibo↔hijo, o el whoami del hijo falla o no confirma
-  la generación: `identidad_rotada` (el token previo ya está revocado). Si la
+  la generación en el runtime declarado: `identidad_rotada` (el token previo
+  ya está revocado). Si la
   autoridad del hijo es otra (principal/role/lane, capacidades o generación
   distintos): `autoridad_incompatible`. Si
   los contextos no se pueden reconstruir (un objetivo dejó de constar):
@@ -141,7 +144,7 @@ respuesta; en continuo: dos renovaciones SIMULADAS seguidas (recibo y whoami
 del hijo guionizados, generación conservada) con observación posterior y
 secuencia nueva por identidad, recibo con OTRA generación→parada, recibo con
 capacidades distintas→parada, recibo con plazo vencido→parada, plazos
-recibo≠hijo→parada, hijo sin generación explícita→parada (sin fallback),
+recibo≠hijo→parada, runtime declarado del hijo sin generación coincidente→parada,
 sensor conservado entre renovaciones, pendiente resuelto antes de rotar
 (mismos bytes y clave bajo la sesión vigente), expiración con pendiente sin
 resolver→parada visible, autoridad incompatible→parada, whoami del hijo

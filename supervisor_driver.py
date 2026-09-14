@@ -54,7 +54,9 @@ camino normal la ADOPTA, con doble validación y sin soltar nada en el aire:
 
   1. recibo completo: token, runtime_instance, expires_at y generation;
   2. `whoami` CON EL TOKEN HIJO: mismo rti que el recibo, plazo presente y
-     autoridad (principal/role/lane) IDÉNTICA a la consultada al arranque.
+     autoridad (principal/role/lane) IDÉNTICA a la consultada al arranque;
+     la generación se confirma en `GET /runtimes/{rti}` porque el contrato
+     público de `whoami` no la expone.
   3. Transición SÓLO sin peticiones en vuelo: si queda algo pendiente, la
      vuelta lo reanuda con los mismos bytes y clave bajo la sesión VIGENTE;
      si no puede resolverse antes de expirar, parada visible con los
@@ -68,9 +70,9 @@ Si el recibo no se puede validar, el whoami del hijo no cuadra o la autoridad
 cambia (principal/role/lane distintos), la corrida termina VISIBLE con lo
 pendiente declarado. La sesión del supervisor no exige nueva activación del
 organigrama por cada token renovado: la generación del observador que entra
-en el contexto sale del RECIBO (y del whoami del hijo cuando el gateway la
-expone, campo `generation` añadido a `_identity_wire` por el encargo
-MARK:codex-supervisor-renovacion-real), no del estado del runtime propio.
+en el contexto sale del RECIBO y la confirma el runtime hijo en
+`GET /runtimes/{rti}`, no del estado del runtime propio ni de un campo que el
+`whoami` público no promete.
 """
 from __future__ import annotations
 
@@ -247,6 +249,7 @@ class Driver:
         self._espera = espera
         self._enviar = enviar                  # inyectable: los tests guionizan el socket
         self.observer_rti: str | None = None
+        self._rti_observador_declarado: str | None = None
         self.deadline: float | None = None
         # Generación del OBSERVIDOR que entra en el contexto. Al arrancar sale
         # del runtime propio (credential_generation); tras una renovación
@@ -366,8 +369,9 @@ class Driver:
                     "el recibo de renovación no reproduce la autoridad del "
                     "arranque (principal/role/lane, capacidades o generación)")
         # ② WHOAMI CON EL TOKEN HIJO (sin adoptarlo aún): el recibo declara y
-        # el servidor confirma quién ES el token, con generation EXPLÍCITA —
-        # sin fallback al recibo, que es lo que se está verificando.
+        # el servidor confirma quién ES el token. El whoami público no incluye
+        # generación, así que se confirma después en el runtime hijo; nunca se
+        # usa el recibo como fallback para una respuesta explícita del servidor.
         try:
             status, hijo = self.consulta(RUTA_WHOAMI, token=token)
         except PrecondicionFallida:
@@ -378,11 +382,36 @@ class Driver:
         if hijo.get("runtime_instance") != rti:
             return ("parada", "identidad_rotada",
                     "whoami del hijo no cuadra con el recibo")
-        gen_hijo = hijo.get("generation")
-        if type(gen_hijo) is not int or isinstance(gen_hijo, bool) \
-                or gen_hijo != generacion:
-            return ("parada", "identidad_rotada",
-                    "el whoami del hijo no confirma la generación del recibo")
+        if "generation" in hijo:
+            gen_hijo = hijo.get("generation")
+            if type(gen_hijo) is not int or isinstance(gen_hijo, bool) \
+                    or gen_hijo != generacion:
+                return ("parada", "identidad_rotada",
+                        "el whoami del hijo no confirma la generación del recibo")
+        else:
+            try:
+                # El rti hijo recién rotado aún no consta como workload del
+                # organigrama: el registro conserva el rti ORIGINAL del
+                # observador. Se consulta esa fila con el token hijo, que es
+                # la misma autoridad, para confirmar su generation durable.
+                rti_declarado = self._rti_observador_declarado or rti
+                status, runtime_hijo = self.consulta(
+                    RUTA_RUNTIMES + urllib.parse.quote(rti_declarado, safe=""),
+                    token=token)
+            except PrecondicionFallida:
+                return ("parada", "identidad_rotada",
+                        "runtime declarado del observador sin respuesta; no "
+                        "confirma su generación")
+            if status != 200:
+                return ("parada", "identidad_rotada",
+                        f"runtime declarado del observador HTTP {status}; no "
+                        "confirma su generación")
+            gen_hijo = runtime_hijo.get("credential_generation")
+            if type(gen_hijo) is not int or isinstance(gen_hijo, bool) \
+                    or gen_hijo != generacion:
+                return ("parada", "identidad_rotada",
+                        "el runtime declarado del observador no confirma la "
+                        "generación del recibo")
         if tuple(hijo.get(k) for k in ("principal", "role", "lane")) \
                 != self._autoridad \
                 or frozenset(hijo.get("capabilities") or ()) != self._autoridad_caps:
@@ -462,6 +491,7 @@ class Driver:
         if "expires_at" not in cuerpo:
             raise PrecondicionFallida("whoami sin expires_at: no arranco sin plazo")
         self.observer_rti = rti
+        self._rti_observador_declarado = rti
         self.deadline = _parse_expira(cuerpo["expires_at"])
         # La autoridad que la renovación tendrá que reproducir: principal,
         # role y lane CONSULTADOS (una renovación que sirva otros es otra

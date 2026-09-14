@@ -69,7 +69,9 @@ MAPA_BASE = {D.RUTA_RUNTIMES + "rti-obs": (200, OBSERVA),
 def _consulta_en_cola(cola_whoami, mapa):
     """whoami por TURNO (tuplas (status, cuerpo): original, hijos...) y mapa
     estático para el resto: la renovación pregunta whoami con el token HIJO y
-    el test decide qué identidad declara el servidor en cada momento."""
+    el test decide qué identidad declara el servidor en cada momento. Un valor
+    lista en el mapa permite guionar una segunda lectura del runtime declarado
+    del observador, usado para confirmar generation cuando whoami no la expone."""
     turno = {"n": 0}
 
     def consulta(ruta, token=None):
@@ -80,7 +82,10 @@ def _consulta_en_cola(cola_whoami, mapa):
             if isinstance(v, Exception):
                 raise v
             return v
-        return mapa.get(ruta, (404, {}))
+        v = mapa.get(ruta, (404, {}))
+        if isinstance(v, list):
+            v = v.pop(0) if v else (404, {})
+        return v
     return consulta
 
 
@@ -417,7 +422,8 @@ def test_continuo_renovacion_validada_adopta_y_sigue_hasta_la_senal(
         monkeypatch, tmp_path, capsys):
     """El camino NORMAL: rotación con whoami del hijo cuadrado (misma
     autoridad) se ADOPTA — contextos y secuencias nuevos, observación que
-    sigue, --vueltas NO acota el modo continuo."""
+    sigue, --vueltas NO acota el modo continuo. Como el whoami público no
+    expone generation, se confirma en la fila durable del runtime declarado."""
     cuerpos = []
 
     def srv(url, cuerpo, clave):
@@ -428,11 +434,15 @@ def test_continuo_renovacion_validada_adopta_y_sigue_hasta_la_senal(
 
     driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=2, srv=srv,
                              continuo=True, margen_s=120.0)
-    hijo = _whoami_de("rti-hijo", 1757000600, 4)
+    hijo = {k: v for k, v in _whoami_de("rti-hijo", 1757000600, 4).items()
+            if k != "generation"}
     monkeypatch.setattr(driver, "refresca", lambda ttl: (200, dict(WIRE_HIJO)))
+    mapa = dict(MAPA_BASE)
+    mapa[D.RUTA_RUNTIMES + "rti-obs"] = [
+        (200, OBSERVA), (200, OBSERVA)]
     monkeypatch.setattr(driver, "consulta",
                         _consulta_en_cola(_cola(dict(WHOAMI), hijo),
-                                          dict(MAPA_BASE)))
+                                          mapa))
 
     codigo = driver.corre()
 
@@ -698,19 +708,21 @@ def test_continuo_plazos_recibo_y_hijo_divergentes_para_visible(
     assert sesion["estado"] == "identidad_rotada"
 
 
-def test_continuo_hijo_sin_generation_explicita_para_visible(
+def test_continuo_hijo_sin_generation_y_runtime_sin_confirmacion_para_visible(
         monkeypatch, tmp_path, capsys):
-    """El whoami del hijo SIN `generation` no cae al fallback del recibo: lo
-    que se valida es lo que el SERVIDOR confirma, explícito o parada."""
+    """El whoami del hijo no trae `generation` y el runtime declarado tampoco
+    la confirma: no se cae al fallback del recibo y la parada es visible."""
     srv = Servidor({"rti-t": []})
     driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=99, srv=srv,
                              continuo=True)
     monkeypatch.setattr(driver, "refresca", lambda ttl: (200, dict(WIRE_HIJO)))
     hijo = {k: v for k, v in _whoami_de("rti-hijo", 1757000600, 4).items()
             if k != "generation"}
+    mapa = dict(MAPA_BASE)
+    mapa[D.RUTA_RUNTIMES + "rti-obs"] = [
+        (200, OBSERVA), (200, dict(OBSERVA, credential_generation=99))]
     monkeypatch.setattr(driver, "consulta", _consulta_en_cola(
-        _cola(dict(WHOAMI), hijo),
-        dict(MAPA_BASE)))
+        _cola(dict(WHOAMI), hijo), mapa))
     codigo = driver.corre()
     assert codigo == D.EX_SESION_EXPIRADA
     assert srv.intentos == []
