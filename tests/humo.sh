@@ -99,8 +99,8 @@ comp "alice tiene bandeja" "1" "$n"
 # falsador: si el GET mutara el cursor (bug real, corregido), la 2ª lectura saldría vacía
 n2=$(contar "para ti" "${A[@]}" "$U/inbox/alice-backend")
 comp "el GET no consume" "1" "$n2"
-# y el POST sí avanza
-curl -s "${A[@]}" -H 'Content-Type: application/json' -d '{"hasta":{"t":99}}' -o /dev/null "$U/inbox/alice-backend/leido"
+# y el POST sí avanza hasta el último arrival real (el ledger del smoke tiene 0 y 1)
+curl -s "${A[@]}" -H 'Content-Type: application/json' -d '{"hasta":{"t":1}}' -o /dev/null "$U/inbox/alice-backend/leido"
 comp "el POST sí avanza" "0" "$(contar 'para ti' "${A[@]}" "$U/inbox/alice-backend")"
 # LA MISMA BANDEJA ESCRITA EN MAYÚSCULAS ES LA MISMA BANDEJA. El destinatario se
 # empareja por el nombre canónico (ignora la caja) pero el cursor se guardaba con la
@@ -114,10 +114,10 @@ comp "y la MISMA bandeja en MAYÚSCULAS está igual de drenada" "0" \
 # El otro brazo: que el POST en mayúsculas NO cree un cursor paralelo. Se comprueba
 # por el efecto —el cursor canónico se mueve— y no por la respuesta, que dice ok:true
 # en los dos casos: un campo que refleja tu entrada no es una verificación.
-curl -s "${A[@]}" -H 'Content-Type: application/json' -d '{"hasta":{"t":5}}' -o /dev/null "$U/inbox/ALICE-BACKEND/leido"
-comp "y un POST en MAYÚSCULAS mueve el cursor del canónico" "5" \
+curl -s "${A[@]}" -H 'Content-Type: application/json' -d '{"hasta":{"t":1}}' -o /dev/null "$U/inbox/ALICE-BACKEND/leido"
+comp "y un POST en MAYÚSCULAS mueve el cursor del canónico" "1" \
   "$(curl -s "${A[@]}" "$U/cursor/alice-backend" | python3 -c 'import sys,json;print(json.load(sys.stdin)["t"])')"
-curl -s "${A[@]}" -H 'Content-Type: application/json' -d '{"hasta":{"t":99}}' -o /dev/null "$U/inbox/alice-backend/leido"
+curl -s "${A[@]}" -H 'Content-Type: application/json' -d '{"hasta":{"t":1}}' -o /dev/null "$U/inbox/alice-backend/leido"
 
 # DRENAR TIENE QUE PODER FALLAR A LA VISTA. Este endpoint devolvía
 # `{"ok":true,"cursores":<tu propia entrada>}` pasara lo que pasara: un ledger mal
@@ -131,29 +131,26 @@ comp "un ledger DESCONOCIDO no puede dar ok:true" "False" \
 comp "y la respuesta lo NOMBRA en ignorados" "no-existe" \
   "$(printf '%s' "$R" | python3 -c 'import sys,json;print(",".join(json.load(sys.stdin)["ignorados"]))' 2>/dev/null)"
 # CONTROL POSITIVO: uno REAL sí tiene que aplicarse, o lo de arriba pasaría con el
-# endpoint roto del todo.
-R2=$(curl -s "${A[@]}" -H 'Content-Type: application/json' -d '{"hasta":{"t":7}}' "$U/inbox/alice-backend/leido")
+# endpoint roto del todo. El cursor ya está en 1: repetir el último arrival sigue
+# siendo una aplicación válida y deja el ANTES/AHORA observable.
+R2=$(curl -s "${A[@]}" -H 'Content-Type: application/json' -d '{"hasta":{"t":1}}' "$U/inbox/alice-backend/leido")
 comp "un ledger REAL sí se aplica (el gate no está mudo)" "True" \
   "$(printf '%s' "$R2" | python3 -c 'import sys,json;print(json.load(sys.stdin)["ok"])' 2>/dev/null)"
-comp "y trae el ANTES y el AHORA, no un eco" "7" \
+comp "y trae el ANTES y el AHORA, no un eco" "1" \
   "$(printf '%s' "$R2" | python3 -c 'import sys,json;print(json.load(sys.stdin)["aplicados"]["t"]["ahora"])' 2>/dev/null)"
-# RETROCEDER NO ES «SIN EFECTO», aunque el tramo sea sólo preventivo. Este ledger
-# tiene arrivals reales 0 y 1: al mover 9 → 4 el tramo aritmético mide 5, pero no
-# vuelve a verse ninguna entrada. Contar 5 aquí era el defecto corregido por #61:
-# confundía posiciones inexistentes —o correo ajeno— con correo recuperado.
-# Se exigen LOS DOS valores y el objeto `retrocedidos`: usar `.get(..., 0)` sólo
-# para esperar cero dejaría pasar la desaparición completa del contrato.
-curl -s "${A[@]}" -H 'Content-Type: application/json' -d '{"hasta":{"t":9}}' -o /dev/null "$U/inbox/alice-backend/leido"
-RET=$(curl -s "${A[@]}" -H 'Content-Type: application/json' -d '{"hasta":{"t":4}}' "$U/inbox/alice-backend/leido" \
-      | python3 -c 'import sys,json;d=json.load(sys.stdin)["retrocedidos"]["t"];print("{}:{}".format(d["tramo"],d["vuelven_a_verse"]))' 2>/dev/null)
-comp "retroceder declara el tramo y no fabrica entradas que vuelven" "5:0" "${RET:-sin-contrato}"
-curl -s "${A[@]}" -H 'Content-Type: application/json' -d '{"hasta":{"t":99}}' -o /dev/null "$U/inbox/alice-backend/leido"
+# RETROCEDER está cerrado por contrato: no fabrica un recibo de recuperación ni
+# modifica el cursor. El 409 lleva la receta y el cursor vigente para que el
+# consumidor pueda releer el tramo correcto.
+RET=$(curl -s "${A[@]}" -H 'Content-Type: application/json' -d '{"hasta":{"t":0}}' "$U/inbox/alice-backend/leido" \
+      | python3 -c 'import sys,json;d=json.load(sys.stdin)["detail"];print("{}:{}".format(d["code"],d["cursor_actual"]))' 2>/dev/null)
+comp "retroceder declara recuperación y conserva el cursor" "ACK_REWIND_REQUIRES_RECOVERY:1" "${RET:-sin-contrato}"
+curl -s "${A[@]}" -H 'Content-Type: application/json' -d '{"hasta":{"t":1}}' -o /dev/null "$U/inbox/alice-backend/leido"
 # Y el cuerpo que sugiere la bandeja tiene que ser PEGABLE, no una taquigrafía: es
 # donde se rompían los 24.723 intentos.
 SUG=$(curl -s "${A[@]}" "$U/inbox/bob-reviewer" | grep -oE '\{"hasta":\{.*\}\}' | tail -1)
 comp "la bandeja sugiere un cuerpo JSON válido" "ok" \
   "$(printf '%s' "${SUG:-x}" | python3 -c 'import sys,json;d=json.load(sys.stdin);print("ok" if "hasta" in d else "no")' 2>/dev/null || echo "no-json")"
-curl -s "${A[@]}" -H 'Content-Type: application/json' -d '{"hasta":{"t":99}}' -o /dev/null "$U/inbox/alice-backend/leido"
+curl -s "${A[@]}" -H 'Content-Type: application/json' -d '{"hasta":{"t":1}}' -o /dev/null "$U/inbox/alice-backend/leido"
 
 echo "── integridad: distinguir escribir de borrar ──"
 printf '\n### [alice-backend → bob-reviewer · FYI] tercera a medias\n' >> "$TMP/l.md"; sleep 3
