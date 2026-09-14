@@ -935,6 +935,7 @@ def _identity_wire(value: C.SessionView) -> dict[str, Any]:
         "lane": value.lane,
         "runtime_instance": value.runtime_instance,
         "expires_at": value.expires_at,
+        "generation": value.generation,
         "principal_source": value.principal_source,
         "capabilities": list(value.capabilities),
     }
