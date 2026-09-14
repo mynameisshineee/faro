@@ -59,7 +59,13 @@ tests/gates-oss.sh:otro@llminbox.invalid  # RFC 2606 reserved TLD, the deliberat
 tests/pilot/test_topologia.py:pilot@example.invalid  # RFC 2606 reserved TLD, author of temporary Git history fixtures; not a personal address
 tools/artefacto-gate.py:/Users/alguien  # example inside a comment explaining why a trust path may not point outside the repo
 
-docs/AGENT-OS-v0.3.md:bik.eus  # whole file is pending a publish/remove decision — the gate calls it dead when it runs INSIDE the published artefact (the file is not there), and alive when it runs over the work tree, which is where it lives. Not dead: out of scope.
+# ── Certified v0.9 anchor fixture ────────────────────────────────────────────
+# These exact bytes are the three measured surfaces of commit
+# 767702559817759a36b0be4715af6e1a8ccf9f7b. Redacting a matched name or domain
+# would make bench/ancla-v09 cease to be byte-identical, so the exceptions are
+# path-and-text exact and remain visible in every hygiene run.
+bench/ancla-v09/ledger_parse.py:Albert  # byte-exact certified v0.9 anchor surface; redaction would invalidate its identity
+bench/ancla-v09/ledger_parse.py:bik.eus  # byte-exact certified v0.9 anchor surface; redaction would invalidate its identity
 
 # ── NOMBRES DE PERSONA EN DATOS DE TEST (clase b) ────────────────────────────
 # La regla de producto los anonimiza antes de publicar. En estos ficheros el nombre
