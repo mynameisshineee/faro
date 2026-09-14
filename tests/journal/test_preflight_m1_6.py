@@ -278,10 +278,10 @@ def test_09_un_reemplazo_del_MISMO_tamano_y_otro_inode_se_caza(tmp_path):
     ruta, _ = _base(tmp_path)
     j = _abre(ruta)
     j.initialize()                             # clasifica, valida y late la identidad
+    j._connect()                               # deja un handle operacional cacheado
     gemelo = ruta + ".gemelo"
     shutil.copy2(ruta, gemelo)
     os.replace(gemelo, ruta)                   # mismo tamaño, INODE distinto
-    j.close()                                  # fuerza reconexión de esta hebra
     with pytest.raises(C.IdentityChanged):
         j._connect()
 
