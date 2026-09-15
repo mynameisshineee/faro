@@ -1,0 +1,205 @@
+# Topología de DOS LANES para el falsador de aislamiento de V1.0 (G9 —
+# `docs/V1.0-EXECUTION.md`) — FICHERO APARTE, mismo motivo que
+# `docker-compose.pilot.yml`: no toca `docker-compose.yml` ni `Dockerfile`, que
+# son superficie de `m4`/`m5`, y esta entrega tiene prohibido tocarlos.
+#
+# Las DOS lanes usan el MISMO nombre lógico de ledger («llminbox», en
+# `LLMINBOX_LEDGERS`) — colisión DELIBERADA, no un descuido. Si el aislamiento
+# dependiera de que ese nombre fuera único entre lanes, este compose lo
+# rompería a propósito para probarlo. Lo que aísla de verdad son volúmenes,
+# rutas de host, tokens, atestados y red — todos DISTINTOS por lane, con sus
+# propias variables — y `tools/pilot_topologia_dual.py` verifica exactamente
+# eso: nunca el nombre lógico, siempre el recurso físico que hay detrás.
+#
+# Cada lane repite, service a service, la forma de M1 (`gateway`/`agente`, un
+# ledger RW + un testigo `ro`, journal e índice en volúmenes separados,
+# endurecimiento I13 completo). Lo nuevo de este fichero es el CRUCE: siete
+# categorías (identidad, sesión, ledger, recibo, cursor de búsqueda,
+# recuperación, volumen — la lista de G9) con su variable propia por lane y
+# su red propia, para que un cruce sólo pueda ocurrir si alguien pega a mano
+# el mismo valor en las dos lanes — nunca porque el compose lo comparta.
+#
+# ⚠️ NADA aquí se despliega en esta entrega — igual que M1. Se valida en
+#    estático (`tests/pilot/test_topologia_dual.py` + `docker compose config`,
+#    los dos en CI). Ver `docs/PILOT-V1-DUAL-LANE-TOPOLOGY.md` para lo que esto
+#    prueba y lo que deja pendiente a propósito.
+#
+# Sin `container_name:` A PROPÓSITO (revisión estática temprana): un nombre
+# fijo es único en el DAEMON entero, no por proyecto — dos corridas paralelas
+# de este mismo fichero (dos PR, dos CI runners) chocarían aunque `name:` y los
+# volúmenes fueran distintos. Compose deriva `<project>-<service>-N`
+# automáticamente; para correr dos instancias en paralelo en el mismo host,
+# usa `-p <otro-nombre>` y overridea también `LLMINBOX_DUAL_LANE_*_PORT`
+# —los puertos SÍ son fijos por defecto y chocan si no se cambian—.
+
+name: llminbox-pilot-dual
+
+services:
+
+  # ═══════════════════════════════════════════════════════ LANE A ═══════════
+  gateway_a:
+    build: .
+    restart: "no"
+    ports: ["127.0.0.1:${LLMINBOX_DUAL_LANE_A_PORT:-8199}:8077"]
+    entrypoint: ["/bin/sh", "-c",
+                 "python3 /app/tools/pilot_preflight.py && exec uvicorn servicio:app --host 0.0.0.0 --port 8077 --log-level warning"]
+    environment:
+      LLMINBOX_JOURNAL: /journal/coordination.sqlite
+      # ── X5 · RECIBO: el journal es donde vive el recibo durable de cada
+      # transición (G7/GUARANTEES.md). Su identidad y testigo son de ESTA lane.
+      LLMINBOX_JOURNAL_VOLUME_ID: "${LLMINBOX_DUAL_LANE_A_JOURNAL_VOLUME_ID:?genera uno con `python3 tools/pilot_preflight.py --genera-id`}"
+      LLMINBOX_JOURNAL_VOLUME_WITNESS: "${LLMINBOX_DUAL_LANE_A_JOURNAL_VOLUME_WITNESS:?la imprime el primer --init de la lane A}"
+      LLMINBOX_PEPPER_FILE: /run/pepper/journal.pepper
+      LLMINBOX_CREDENCIALES: /credenciales/mapa.json
+      # ── X3 · SESIÓN: el atestado del mapa deriva rol/carril/sesión. Con el
+      # mismo atestado en las dos lanes, un mapa sustituido en una pasaría el
+      # atestado de la otra y las sesiones que derive de él también.
+      LLMINBOX_CREDENCIALES_SHA: "${LLMINBOX_DUAL_LANE_A_CREDENCIALES_SHA:?sha256 del mapa de la lane A}"
+      LLMINBOX_ROSTER: /state/roster.json
+      LLMINBOX_LEDGER_PILOTO: /ledgers/llminbox
+      # ── X4 · LEDGER: identidad y testigo propios de la lane A.
+      LLMINBOX_LEDGER_PILOTO_ID: "${LLMINBOX_DUAL_LANE_A_LEDGER_ID:?identidad del ledger de la lane A}"
+      LLMINBOX_LEDGER_PILOTO_WITNESS: "${LLMINBOX_DUAL_LANE_A_LEDGER_WITNESS:?la imprime el primer --init de la lane A}"
+      # COLISIÓN DELIBERADA: idéntico en la lane B. El nombre lógico «llminbox»
+      # no es el que aísla — lo hacen `LEDGER_PILOTO_ID`/`_WITNESS` de arriba y
+      # el host real montado más abajo.
+      LLMINBOX_LEDGERS: "llminbox=/ledgers/llminbox/LEDGER.md,testigo=/ledgers/testigo/LEDGER.md"
+      LLMINBOX_DB: /data/llminbox.sqlite
+      # ── X2 · IDENTIDAD: token PROPIO de la lane A. Con `${LLMINBOX_TOKEN}` o
+      # con el mismo nombre que la lane B, la credencial de quien despliega — o
+      # la de la otra lane — entraría sola, sin que nadie escribiera una línea.
+      LLMINBOX_TOKEN: "${LLMINBOX_DUAL_LANE_A_TOKEN:?token propio de la lane A, distinto de la lane B y de la flota}"
+      # ── X6 · CURSOR DE BÚSQUEDA: sin valor NI variable compartida. Un
+      # default —aunque parezca inocuo— sería una clave común a las dos lanes,
+      # o sea cursores de la lane A válidos en la lane B. Sin ella, `servicio.py`
+      # no monta Search: fail-closed, la conducta de hoy.
+      LLMINBOX_SEARCH_CURSOR_KEY: "${LLMINBOX_DUAL_LANE_A_SEARCH_CURSOR_KEY:-}"
+      LLMINBOX_LEGACY_MUTATION_POLICY: "bridge"
+      LLMINBOX_CARRIL_OBLIGATORIO: "1"
+      LLMINBOX_POLL: "${LLMINBOX_POLL:-30.0}"
+    volumes:
+      # ── X1 · VOLUMEN: journal, índice y pepper en volúmenes NOMBRADOS
+      # propios de la lane A — ninguno se declara en la lane B.
+      - llminbox-pilot-dual-a-journal:/journal
+      - llminbox-pilot-dual-a-index:/data
+      - "${LLMINBOX_DUAL_LANE_A_LEDGER_HOST:?directorio del ledger de la lane A}:/ledgers/llminbox"
+      - "${LLMINBOX_DUAL_LANE_A_LEDGER_TESTIGO_HOST:?segundo ledger de la lane A para el control negativo}:/ledgers/testigo:ro"
+      - "${LLMINBOX_DUAL_LANE_A_MAPA_HOST:?mapa de credenciales de la lane A}:/credenciales/mapa.json:ro"
+      - "${LLMINBOX_DUAL_LANE_A_ROSTER_HOST:?roster de la lane A}:/state/roster.json:ro"
+      - llminbox-pilot-dual-a-pepper:/run/pepper:ro
+      - ./tools:/app/tools:ro
+    # ── X0 · RED: propia de la lane A. Sin esto, compose mete a las dos lanes
+    # en la red por defecto del proyecto y quedan mutuamente alcanzables por
+    # DNS de servicio — la superficie de transporte que necesitaría cualquier
+    # cruce de sesión, recibo o recuperación que viaje por la API.
+    networks: [red_a]
+    healthcheck:
+      test: ["CMD", "python3", "/app/tools/pilot_preflight.py", "--readiness"]
+      interval: 30s
+      timeout: 5s
+      retries: 1
+      start_period: 20s
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    user: "1000:1000"
+
+  agente_a:
+    image: python:3.13-slim
+    restart: "no"
+    # SIN `volumes:`, igual que M1: un agente que puede leer un ledger no
+    # necesita pedir autoridad, y entonces el piloto no prueba nada.
+    environment:
+      LLMINBOX_API: http://gateway_a:8077
+      LLMINBOX_CREDENCIAL: "${LLMINBOX_DUAL_LANE_A_AGENTE_CREDENCIAL:?credencial del agente de la lane A}"
+    command: ["python3", "-c", "import time; print('agente lane A en pie: sin ledgers, sin home, sin socket, sin journal', flush=True); time.sleep(3600)"]
+    depends_on: {gateway_a: {condition: service_healthy}}
+    networks: [red_a]
+    read_only: true
+    tmpfs: ["/tmp"]
+    user: "1000:1000"
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
+  # ═══════════════════════════════════════════════════════ LANE B ═══════════
+  # Espejo exacto de la lane A. Toda variable que en A referenciaba
+  # `..._LANE_A_...` referencia aquí `..._LANE_B_...`: distinta variable,
+  # nunca el mismo nombre — eso es justo lo que `tools/pilot_topologia_dual.py`
+  # comprueba, no el valor (que además ninguna de las dos partes puede leer
+  # aquí: son indirecciones `${...}`, igual que en M1).
+  gateway_b:
+    build: .
+    restart: "no"
+    ports: ["127.0.0.1:${LLMINBOX_DUAL_LANE_B_PORT:-8299}:8077"]
+    entrypoint: ["/bin/sh", "-c",
+                 "python3 /app/tools/pilot_preflight.py && exec uvicorn servicio:app --host 0.0.0.0 --port 8077 --log-level warning"]
+    environment:
+      LLMINBOX_JOURNAL: /journal/coordination.sqlite
+      LLMINBOX_JOURNAL_VOLUME_ID: "${LLMINBOX_DUAL_LANE_B_JOURNAL_VOLUME_ID:?genera uno con `python3 tools/pilot_preflight.py --genera-id`}"
+      LLMINBOX_JOURNAL_VOLUME_WITNESS: "${LLMINBOX_DUAL_LANE_B_JOURNAL_VOLUME_WITNESS:?la imprime el primer --init de la lane B}"
+      LLMINBOX_PEPPER_FILE: /run/pepper/journal.pepper
+      LLMINBOX_CREDENCIALES: /credenciales/mapa.json
+      LLMINBOX_CREDENCIALES_SHA: "${LLMINBOX_DUAL_LANE_B_CREDENCIALES_SHA:?sha256 del mapa de la lane B}"
+      LLMINBOX_ROSTER: /state/roster.json
+      LLMINBOX_LEDGER_PILOTO: /ledgers/llminbox
+      LLMINBOX_LEDGER_PILOTO_ID: "${LLMINBOX_DUAL_LANE_B_LEDGER_ID:?identidad del ledger de la lane B}"
+      LLMINBOX_LEDGER_PILOTO_WITNESS: "${LLMINBOX_DUAL_LANE_B_LEDGER_WITNESS:?la imprime el primer --init de la lane B}"
+      LLMINBOX_LEDGERS: "llminbox=/ledgers/llminbox/LEDGER.md,testigo=/ledgers/testigo/LEDGER.md"
+      LLMINBOX_DB: /data/llminbox.sqlite
+      LLMINBOX_TOKEN: "${LLMINBOX_DUAL_LANE_B_TOKEN:?token propio de la lane B, distinto de la lane A y de la flota}"
+      LLMINBOX_SEARCH_CURSOR_KEY: "${LLMINBOX_DUAL_LANE_B_SEARCH_CURSOR_KEY:-}"
+      LLMINBOX_LEGACY_MUTATION_POLICY: "bridge"
+      LLMINBOX_CARRIL_OBLIGATORIO: "1"
+      LLMINBOX_POLL: "${LLMINBOX_POLL:-30.0}"
+    volumes:
+      - llminbox-pilot-dual-b-journal:/journal
+      - llminbox-pilot-dual-b-index:/data
+      - "${LLMINBOX_DUAL_LANE_B_LEDGER_HOST:?directorio del ledger de la lane B}:/ledgers/llminbox"
+      - "${LLMINBOX_DUAL_LANE_B_LEDGER_TESTIGO_HOST:?segundo ledger de la lane B para el control negativo}:/ledgers/testigo:ro"
+      - "${LLMINBOX_DUAL_LANE_B_MAPA_HOST:?mapa de credenciales de la lane B}:/credenciales/mapa.json:ro"
+      - "${LLMINBOX_DUAL_LANE_B_ROSTER_HOST:?roster de la lane B}:/state/roster.json:ro"
+      - llminbox-pilot-dual-b-pepper:/run/pepper:ro
+      - ./tools:/app/tools:ro
+    networks: [red_b]
+    healthcheck:
+      test: ["CMD", "python3", "/app/tools/pilot_preflight.py", "--readiness"]
+      interval: 30s
+      timeout: 5s
+      retries: 1
+      start_period: 20s
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    user: "1000:1000"
+
+  agente_b:
+    image: python:3.13-slim
+    restart: "no"
+    environment:
+      LLMINBOX_API: http://gateway_b:8077
+      LLMINBOX_CREDENCIAL: "${LLMINBOX_DUAL_LANE_B_AGENTE_CREDENCIAL:?credencial del agente de la lane B}"
+    command: ["python3", "-c", "import time; print('agente lane B en pie: sin ledgers, sin home, sin socket, sin journal', flush=True); time.sleep(3600)"]
+    depends_on: {gateway_b: {condition: service_healthy}}
+    networks: [red_b]
+    read_only: true
+    tmpfs: ["/tmp"]
+    user: "1000:1000"
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
+networks:
+  # Sin `red_a`/`red_b` explícitas, compose crea UNA red por defecto para todo
+  # el proyecto y las cuatro contenedores quedan en ella — lane A y lane B
+  # mutuamente alcanzables por DNS de servicio pese a los volúmenes separados.
+  red_a: {}
+  red_b: {}
+
+volumes:
+  llminbox-pilot-dual-a-journal:
+  llminbox-pilot-dual-a-index:
+  llminbox-pilot-dual-a-pepper:
+  llminbox-pilot-dual-b-journal:
+  llminbox-pilot-dual-b-index:
+  llminbox-pilot-dual-b-pepper:

@@ -356,6 +356,15 @@ jobs:
       # COMPOSE, que ningún test parsea.
       - name: El compose del estreno es un compose válido
         run: docker compose -f docker-compose.pilot-estreno.yml --env-file tests/pilot/env.example config -q
+      # V1.0 · dos lanes (G9). Sus pruebas también viven en `tests/pilot` y ya
+      # las corre el paso de arriba — mismo motivo que el estreno de M1, no se
+      # duplica. Lo que sí necesita paso propio es validar los DOS compose
+      # nuevos como compose real, con el mismo `env.example` (ya lleva las
+      # variables `LLMINBOX_DUAL_LANE_*`).
+      - name: El compose de dos lanes (V1.0/G9) es un compose válido
+        run: docker compose -f docker-compose.pilot-dual.yml --env-file tests/pilot/env.example config -q
+      - name: El compose del estreno de dos lanes es un compose válido
+        run: docker compose -f docker-compose.pilot-dual-estreno.yml --env-file tests/pilot/env.example config -q
 
   gates-oss:
     name: Los gates OSS saben decir que no
