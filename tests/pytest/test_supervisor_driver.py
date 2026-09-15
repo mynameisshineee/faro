@@ -46,12 +46,15 @@ def _ok(seq, rti):
 WHOAMI = {"principal": "pr-1", "role": "lane", "lane": "llminbox",
           "runtime_instance": "rti-obs", "expires_at": 1757000000,
           "principal_source": "session", "capabilities": ["runtime.read"]}
-OBSERVA = {"workload_id": "w-obs", "credential_generation": 3, "status": "running"}
+# credential_generation 4 = la MISMA que conservan los hijos de renovación
+# (WIRE_HIJO, _whoami_de): la conservación de generación es EXIGIDA por el
+# driver y el arnés la hace literal, no solo comentada.
+OBSERVA = {"workload_id": "w-obs", "credential_generation": 4, "status": "running"}
 OBJETIVO = {"workload_id": "w-t", "credential_generation": 7, "status": "running"}
 
 
 def _consulta_de(mapa):
-    def consulta(ruta):
+    def consulta(ruta, token=None):
         v = mapa.get(ruta, (404, {}))
         if isinstance(v, Exception):
             raise v
@@ -59,8 +62,40 @@ def _consulta_de(mapa):
     return consulta
 
 
+MAPA_BASE = {D.RUTA_RUNTIMES + "rti-obs": (200, OBSERVA),
+             D.RUTA_RUNTIMES + "rti-t": (200, OBJETIVO)}
+
+
+def _consulta_en_cola(cola_whoami, mapa):
+    """whoami por TURNO (tuplas (status, cuerpo): original, hijos...) y mapa
+    estático para el resto: la renovación pregunta whoami con el token HIJO y
+    el test decide qué identidad declara el servidor en cada momento. Un valor
+    lista en el mapa permite guionar una segunda lectura del runtime declarado
+    del observador, usado para confirmar generation cuando whoami no la expone."""
+    turno = {"n": 0}
+
+    def consulta(ruta, token=None):
+        if ruta == D.RUTA_WHOAMI:
+            v = cola_whoami[turno["n"]] if turno["n"] < len(cola_whoami) \
+                else cola_whoami[-1]
+            turno["n"] += 1
+            if isinstance(v, Exception):
+                raise v
+            return v
+        v = mapa.get(ruta, (404, {}))
+        if isinstance(v, list):
+            v = v.pop(0) if v else (404, {})
+        return v
+    return consulta
+
+
+def _cola(*cuerpos):
+    """Atajo: cuerpos de whoami OK en cola."""
+    return [(200, c) for c in cuerpos]
+
+
 def _driver(monkeypatch, tmp_path, *, vueltas=2, mapa=None, srv=None, expira=None,
-            muestrea=None, adopta_fallo=None):
+            muestrea=None, adopta_fallo=None, intervalo_s=5.0, **extras):
     whoami = dict(WHOAMI)
     if expira is not None:
         whoami["expires_at"] = expira
@@ -71,8 +106,8 @@ def _driver(monkeypatch, tmp_path, *, vueltas=2, mapa=None, srv=None, expira=Non
     reloj = _Reloj(1756999900.0)
     driver = D.Driver("http://x", "TK-SECRETO-123", [("rti-t", 42)],
                       fichero_sesion=str(tmp_path / "sesion.json"),
-                      vueltas=vueltas, intervalo_s=5.0,
-                      reloj=reloj, espera=reloj.avanza, enviar=srv)
+                      vueltas=vueltas, intervalo_s=intervalo_s,
+                      reloj=reloj, espera=reloj.avanza, enviar=srv, **extras)
     monkeypatch.setattr(driver, "consulta", _consulta_de(completo))
     monkeypatch.setattr(P, "adopta",
                         lambda pid: P.Handle(pid=pid, arranque="t0", backend="ps"))
@@ -331,3 +366,521 @@ def test_token_no_utf8_es_precondicion_sin_reflejar_su_contenido(tmp_path):
     with pytest.raises(D.PrecondicionFallida) as caught:
         D.lee_token(str(tok))
     assert 'private-token' not in str(caught.value)
+
+
+# ── operación continua (--continuo): el contrato REAL del refresh ──────────
+# Medido en 2626de2, corregido por el REQUEST MARK:codex-supervisor-
+# renovacion-real y endurecido por el REVIEW MARK:codex-supervisor-review-
+# 85cacb2: POST /native/v1/sessions/refresh ROTA — token nuevo, rti hijo
+# NUEVO, token previo revocado en la misma transacción — pero el hijo
+# CONSERVA principal, role, lane, capabilities y generation: es la MISMA
+# autoridad. El RECIBO real (`_session_wire`) trae esa autoridad COMPLETA y
+# los fixtures la reproducen, con plazo recibo==hijo. Un fake que conservara
+# el rti NO sirve como cobertura continua: el gateway real siempre rota.
+# Las renovaciones de ESTE fichero son SIMULADAS (refresca y whoami
+# monkeypatcheados); la aceptación contra el gateway real vive en
+# tests/native_gateway/test_supervisor_driver_renovacion_real.py.
+WIRE_HIJO = {"token": "TK-NUEVO-456", "runtime_instance": "rti-hijo",
+             "principal": "pr-1", "role": "lane", "lane": "llminbox",
+             "capabilities": ["runtime.read"],
+             "expires_at": 1757000600, "generation": 4}
+
+
+def _whoami_de(rti, expires, generation):
+    return {"principal": WHOAMI["principal"], "role": WHOAMI["role"],
+            "lane": WHOAMI["lane"], "runtime_instance": rti,
+            "expires_at": expires, "generation": generation,
+            "principal_source": "session", "capabilities": ["runtime.read"]}
+
+
+def test_continuo_rotacion_no_validable_para_visible_y_no_observa(
+        monkeypatch, tmp_path, capsys):
+    """El recibo declara un hijo; el whoami (con el token hijo) sirve OTRO
+    runtime: no se adopta nada y la corrida termina 3. El token previo ya lo
+    revocó el gateway — la parada es la única salida honesta."""
+    srv = Servidor({"rti-t": []})   # margen 120 > plazo: rota ANTES de observar
+    driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=99, srv=srv,
+                             continuo=True)
+    monkeypatch.setattr(driver, "refresca", lambda ttl: (200, dict(WIRE_HIJO)))
+    # El whoami del mapa es el ORIGINAL (rti-obs): no cuadra con el recibo.
+
+    codigo = driver.corre()
+
+    assert codigo == D.EX_SESION_EXPIRADA
+    assert srv.intentos == [], "no se observa con una identidad no validada"
+    salida = capsys.readouterr().out
+    assert "whoami del hijo no cuadra" in salida
+    assert "TK-NUEVO-456" not in salida, "el token hijo jamás sale por stdout"
+    sesion = json.loads((tmp_path / "sesion.json").read_text())
+    assert sesion["estado"] == "identidad_rotada"
+    assert sesion["continuo"] is True and sesion["vueltas_pedidas"] is None
+    assert sesion["pendientes_al_cierre"] == []
+    assert "TK-NUEVO-456" not in json.dumps(sesion)
+
+
+def test_continuo_renovacion_validada_adopta_y_sigue_hasta_la_senal(
+        monkeypatch, tmp_path, capsys):
+    """El camino NORMAL: rotación con whoami del hijo cuadrado (misma
+    autoridad) se ADOPTA — contextos y secuencias nuevos, observación que
+    sigue, --vueltas NO acota el modo continuo. Como el whoami público no
+    expone generation, se confirma en la fila durable del runtime declarado."""
+    cuerpos = []
+
+    def srv(url, cuerpo, clave):
+        cuerpos.append(dict(cuerpo))
+        if len(cuerpos) >= 3:
+            driver._parar = True   # señal DURANTE la tercera vuelta
+        return _ok(len(cuerpos), "rti-t")
+
+    driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=2, srv=srv,
+                             continuo=True, margen_s=120.0)
+    hijo = {k: v for k, v in _whoami_de("rti-hijo", 1757000600, 4).items()
+            if k != "generation"}
+    monkeypatch.setattr(driver, "refresca", lambda ttl: (200, dict(WIRE_HIJO)))
+    mapa = dict(MAPA_BASE)
+    mapa[D.RUTA_RUNTIMES + "rti-obs"] = [
+        (200, OBSERVA), (200, OBSERVA)]
+    monkeypatch.setattr(driver, "consulta",
+                        _consulta_en_cola(_cola(dict(WHOAMI), hijo),
+                                          mapa))
+
+    codigo = driver.corre()
+
+    assert codigo == D.EX_OK, "cierre ordenado sin incidencias no es un 4"
+    assert [c["supervisor_seq"] for c in cuerpos] == [1, 2, 3], \
+        "secuencia nueva en frío tras adoptar: 3 vueltas pese a --vueltas 2"
+    assert driver.observer_rti == "rti-hijo"
+    assert driver._token == "TK-NUEVO-456"
+    assert driver.deadline == 1757000600.0
+    assert driver._transportes and all(
+        t._token == "TK-NUEVO-456" for t in driver._transportes), \
+        "los transportes nuevos nacen con el token hijo"
+    salida = capsys.readouterr().out
+    assert "rti-obs → rti-hijo" in salida and "misma autoridad" in salida
+    assert salida.count("REFRESCO:") == 1, "adoptado el plazo, no re-refresca"
+    sesion = json.loads((tmp_path / "sesion.json").read_text())
+    assert sesion["estado"] == "parado_por_senal" and \
+        sesion["vueltas_completadas"] == 3
+    assert "TK-NUEVO-456" not in salida + json.dumps(sesion)
+
+
+def test_continuo_dos_renovaciones_simuladas_seguidas_y_observa_despues(
+        monkeypatch, tmp_path, capsys):
+    """Dos rotaciones SIMULADAS seguidas (rti-hijo-1, rti-hijo-2), cada una
+    con su whoami de validación y generación CONSERVADA (4→4); tras la
+    segunda se SIGUE observando con secuencia nueva (nonce nuevo) y el sensor
+    conservado. «Reales» aquí sería falso: refresca y whoami están
+    monkeypatcheados — la aceptación real vive en
+    tests/native_gateway/test_supervisor_driver_renovacion_real.py."""
+    cuerpos, claves = [], []
+
+    def srv(url, cuerpo, clave):
+        cuerpos.append(dict(cuerpo))
+        claves.append(clave)
+        if len(cuerpos) >= 2:
+            driver._parar = True   # señal tras la observación POSTERIOR a R2
+        # El gateway ECOS el supervisor_seq del cuerpo: tras cada rotación la
+        # secuencia nueva va en 1, y un eco acumulativo sería un rechazo real.
+        return _ok(cuerpo["supervisor_seq"], "rti-t")
+
+    estados_pasados = []
+    ciclo_real = D.CicloSupervisor
+
+    def ciclo_espia(*a, **kw):
+        estados_pasados.append(kw.get("estado"))
+        return ciclo_real(*a, **kw)
+    monkeypatch.setattr(D, "CicloSupervisor", ciclo_espia)
+
+    hijo1 = _whoami_de("rti-hijo-1", 1757000010, 4)   # expira en margen: re-renueva
+    hijo2 = _whoami_de("rti-hijo-2", 1757000600, 4)   # generación CONSERVADA
+    cola = _cola(dict(WHOAMI), hijo1, hijo2)
+
+    def refresca(ttl):
+        # Recibos con la autoridad completa del hijo y plazo == whoami (el
+        # driver los compara semánticamente antes de adoptar).
+        if len(cuerpos) == 0:
+            return (200, dict(WIRE_HIJO, token="TK-NUEVO-1",
+                              runtime_instance="rti-hijo-1",
+                              expires_at=1757000010, generation=4))
+        return (200, dict(WIRE_HIJO, token="TK-NUEVO-2",
+                          runtime_instance="rti-hijo-2", generation=4,
+                          expires_at=1757000600))
+
+    driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=99, srv=srv,
+                             continuo=True, margen_s=120.0)
+    monkeypatch.setattr(driver, "refresca", refresca)
+    monkeypatch.setattr(driver, "consulta", _consulta_en_cola(
+        cola, dict(MAPA_BASE)))
+
+    codigo = driver.corre()
+
+    assert codigo == D.EX_OK
+    salida = capsys.readouterr().out
+    assert salida.count("REFRESCO:") == 2, "dos renovaciones simuladas seguidas"
+    assert [c["supervisor_seq"] for c in cuerpos] == [1, 1], \
+        "cada identidad arranca secuencia NUEVA: jamás se reutiliza"
+    assert len(set(claves)) == len(claves), "nonce nuevo por reconstrucción"
+    assert driver.observer_rti == "rti-hijo-2" and driver._token == "TK-NUEVO-2"
+    assert any(e is not None for e in estados_pasados), \
+        "el estado del sensor viaja a la fábrica nueva (no se reinicia)"
+    sesion = json.loads((tmp_path / "sesion.json").read_text())
+    assert sesion["estado"] == "parado_por_senal"
+    assert sesion["objetivos"][0]["arranque"] == "t0", "vínculo conservado"
+    todo = salida + json.dumps(sesion)
+    assert "TK-NUEVO-1" not in todo and "TK-NUEVO-2" not in todo
+
+
+def test_continuo_pendiente_se_resuelve_antes_de_rotar(
+        monkeypatch, tmp_path, capsys):
+    """Regla de transición: con un envío en vuelo NO se rota. DOS pérdidas
+    seguidas dejan el pendiente VIVO (el reintento interno del transporte se
+    agota); la vuelta siguiente lo reanuda con los mismos bytes y clave bajo
+    la sesión VIGENTE, y sólo entonces, con el aire limpio, se renueva y se
+    observa con secuencia nueva."""
+    guion = [T.RespuestaPerdida("sin respuesta"),      # intento 1: inicial
+             T.RespuestaPerdida("sin respuesta"),      # intento 2: reintento interno → pendiente persiste
+             _ok(1, "rti-t"),                          # intento 3: reanude en la vuelta 2
+             _ok(1, "rti-t"),                          # intento 4: primera obs TRAS rotar (secuencia nueva en 1)
+             _ok(2, "rti-t")]                          # intento 5: obs siguiente
+    intentos = []
+
+    def srv(url, cuerpo, clave):
+        intentos.append((clave, dict(cuerpo)))
+        if len(intentos) >= 5:
+            driver._parar = True   # señal tras la observación POSTERIOR a la rotación
+        a = guion.pop(0)
+        if isinstance(a, Exception):
+            raise a
+        return a
+
+    # Reloj (intervalo 2 s): v1 1756999900 (P,P → pendiente) · v2 1756999902
+    # (en margen, CON pendiente → NO rota; reanude ok) · v3 1756999904 (aire
+    # limpio → RENUEVA) · v4 1756999906 (observa) → señal.
+    driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=99, srv=srv,
+                             continuo=True, margen_s=5.0, intervalo_s=2.0,
+                             expira=1756999907.0)
+    hijo = _whoami_de("rti-hijo", 1757000600, 4)
+    monkeypatch.setattr(driver, "refresca", lambda ttl: (200, dict(WIRE_HIJO)))
+    monkeypatch.setattr(driver, "consulta", _consulta_en_cola(
+        # El primer whoami de la cola ES el del arranque: tiene que llevar el
+        # PLAZO CORTO del escenario, no el WHOAMI genérico.
+        _cola(dict(WHOAMI, expires_at=1756999907), hijo),
+        dict(MAPA_BASE)))
+
+    codigo = driver.corre()
+
+    assert codigo == D.EX_INCIDENCIAS, "hay un fallo real acumulado: no es un 0"
+    assert intentos[0][0] == intentos[1][0] == intentos[2][0], \
+        "reenvío y reanude usan la MISMA clave bajo la sesión vigente"
+    assert intentos[0][1] == intentos[1][1] == intentos[2][1], "mismos bytes"
+    assert [c["supervisor_seq"] for _c, c in intentos] == [1, 1, 1, 1, 2], \
+        "reenvío en la secuencia vigente; tras rotar, secuencia nueva en 1"
+    salida = capsys.readouterr().out
+    assert salida.count("REFRESCO:") == 1, "se renueva UNA vez: aire limpio"
+    sesion = json.loads((tmp_path / "sesion.json").read_text())
+    assert sesion["estado"] == "parado_por_senal"
+    assert sesion["pendientes_al_cierre"] == [], \
+        "el pendiente se resolvió antes de rotar: no queda nada en el aire"
+
+
+def test_continuo_expira_con_pendiente_sin_resolver_para_visible(
+        monkeypatch, tmp_path, capsys):
+    """Si lo pendiente no se resuelve antes de expirar: parada VISIBLE con los
+    pendientes declarados — sin revocación anticipada ni olvido. Cero
+    renovaciones: jamás se rota con algo en el aire."""
+    def siempre_perdida(url, cuerpo, clave):
+        raise T.RespuestaPerdida("sin respuesta")
+
+    driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=99,
+                             srv=siempre_perdida, continuo=True, margen_s=5.0,
+                             expira=1756999910.0)
+    llamadas = {"refresco": 0}
+
+    def refresca(ttl):
+        llamadas["refresco"] += 1
+        return (200, dict(WIRE_HIJO))
+    monkeypatch.setattr(driver, "refresca", refresca)
+
+    codigo = driver.corre()
+
+    assert codigo == D.EX_SESION_EXPIRADA
+    assert llamadas["refresco"] == 0, "jamás se rota con peticiones en vuelo"
+    salida = capsys.readouterr().out
+    assert "sin resolver: 1" in salida
+    sesion = json.loads((tmp_path / "sesion.json").read_text())
+    assert sesion["estado"] == "sesion_terminada_sin_refresco"
+    assert sesion["pendientes_al_cierre"] == ["rti-t"]
+
+
+def test_continuo_autoridad_incompatible_para_visible(monkeypatch, tmp_path,
+                                                      capsys):
+    """El hijo conserva principal/role/lane; si el whoami del hijo sirviera
+    OTROS, no es mi renovación: parada visible sin observar."""
+    srv = Servidor({"rti-t": []})
+    driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=99, srv=srv,
+                             continuo=True)
+    monkeypatch.setattr(driver, "refresca", lambda ttl: (200, dict(WIRE_HIJO)))
+    ajeno = dict(_whoami_de("rti-hijo", 1757000600, 4), lane="otro-carril")
+    monkeypatch.setattr(driver, "consulta", _consulta_en_cola(
+        _cola(dict(WHOAMI), ajeno),
+        dict(MAPA_BASE)))
+
+    codigo = driver.corre()
+
+    assert codigo == D.EX_SESION_EXPIRADA
+    assert srv.intentos == [], "una autoridad ajena no observa"
+    salida = capsys.readouterr().out
+    assert "autoridad" in salida
+    sesion = json.loads((tmp_path / "sesion.json").read_text())
+    assert sesion["estado"] == "autoridad_incompatible"
+
+
+def test_continuo_recibo_con_otra_generacion_no_es_misma_autoridad(
+        monkeypatch, tmp_path, capsys):
+    """La generación CONSERVADA es parte de «misma autoridad» (REVIEW
+    85cacb2): un recibo que declarase otra generación —aunque traiga
+    principal/role/lane y plazos cuadrados— NO se adopta: parada visible."""
+    srv = Servidor({"rti-t": []})
+    driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=99, srv=srv,
+                             continuo=True)
+    monkeypatch.setattr(driver, "refresca",
+                        lambda ttl: (200, dict(WIRE_HIJO, generation=5)))
+    codigo = driver.corre()
+    assert codigo == D.EX_SESION_EXPIRADA
+    assert srv.intentos == [], "una generación distinta no observa"
+    assert "generación" in capsys.readouterr().out
+    sesion = json.loads((tmp_path / "sesion.json").read_text())
+    assert sesion["estado"] == "autoridad_incompatible"
+    assert driver._token == "TK-SECRETO-123"
+
+
+def test_continuo_recibo_con_otras_capacidades_para_visible(
+        monkeypatch, tmp_path, capsys):
+    """El conjunto EXACTO de capacidades del arranque se reproduce en el
+    recibo y en el whoami: una capacidad extra (o ausente) para la parada."""
+    srv = Servidor({"rti-t": []})
+    driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=99, srv=srv,
+                             continuo=True)
+    engordado = dict(WIRE_HIJO, capabilities=["runtime.read", "runtime.write"])
+    monkeypatch.setattr(driver, "refresca", lambda ttl: (200, engordado))
+    codigo = driver.corre()
+    assert codigo == D.EX_SESION_EXPIRADA
+    assert srv.intentos == []
+    assert "capacidades" in capsys.readouterr().out
+    sesion = json.loads((tmp_path / "sesion.json").read_text())
+    assert sesion["estado"] == "autoridad_incompatible"
+
+
+def test_continuo_recibo_con_plazo_vencido_para_visible(
+        monkeypatch, tmp_path, capsys):
+    """El plazo del recibo se PARSEA y se compara semánticamente: un
+    `expires_at` en pasado no es un refresco vivo — parada antes del whoami."""
+    srv = Servidor({"rti-t": []})
+    driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=99, srv=srv,
+                             continuo=True)
+    monkeypatch.setattr(driver, "refresca",
+                        lambda ttl: (200, dict(WIRE_HIJO, expires_at=1756999000)))
+    codigo = driver.corre()
+    assert codigo == D.EX_SESION_EXPIRADA
+    assert srv.intentos == []
+    assert "plazo ya vencido" in capsys.readouterr().out
+    sesion = json.loads((tmp_path / "sesion.json").read_text())
+    assert sesion["estado"] == "identidad_rotada"
+
+
+def test_continuo_plazos_recibo_y_hijo_divergentes_para_visible(
+        monkeypatch, tmp_path, capsys):
+    """Recibo e hijo dicen plazos DISTINTOS: la identidad no queda validada
+    aunque ambos sean futuros — no se adopta un plazo que nadie confirma."""
+    srv = Servidor({"rti-t": []})
+    driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=99, srv=srv,
+                             continuo=True)
+    monkeypatch.setattr(driver, "refresca", lambda ttl: (200, dict(WIRE_HIJO)))
+    hijo = _whoami_de("rti-hijo", 1757000700, 4)   # ≠ recibo (1757000600)
+    monkeypatch.setattr(driver, "consulta", _consulta_en_cola(
+        _cola(dict(WHOAMI), hijo),
+        dict(MAPA_BASE)))
+    codigo = driver.corre()
+    assert codigo == D.EX_SESION_EXPIRADA
+    assert srv.intentos == []
+    assert "no cuadra con el recibo" in capsys.readouterr().out
+    sesion = json.loads((tmp_path / "sesion.json").read_text())
+    assert sesion["estado"] == "identidad_rotada"
+
+
+def test_continuo_hijo_sin_generation_y_runtime_sin_confirmacion_para_visible(
+        monkeypatch, tmp_path, capsys):
+    """El whoami del hijo no trae `generation` y el runtime declarado tampoco
+    la confirma: no se cae al fallback del recibo y la parada es visible."""
+    srv = Servidor({"rti-t": []})
+    driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=99, srv=srv,
+                             continuo=True)
+    monkeypatch.setattr(driver, "refresca", lambda ttl: (200, dict(WIRE_HIJO)))
+    hijo = {k: v for k, v in _whoami_de("rti-hijo", 1757000600, 4).items()
+            if k != "generation"}
+    mapa = dict(MAPA_BASE)
+    mapa[D.RUTA_RUNTIMES + "rti-obs"] = [
+        (200, OBSERVA), (200, dict(OBSERVA, credential_generation=99))]
+    monkeypatch.setattr(driver, "consulta", _consulta_en_cola(
+        _cola(dict(WHOAMI), hijo), mapa))
+    codigo = driver.corre()
+    assert codigo == D.EX_SESION_EXPIRADA
+    assert srv.intentos == []
+    assert "generación" in capsys.readouterr().out
+    sesion = json.loads((tmp_path / "sesion.json").read_text())
+    assert sesion["estado"] == "identidad_rotada"
+
+
+def test_continuo_whoami_del_hijo_sin_respuesta_para_visible(
+        monkeypatch, tmp_path, capsys):
+    """Validación fallida del token hijo: nada se adopta (el previo ya está
+    revocado) y la parada declara el estado HTTP, no el cuerpo."""
+    driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=99, continuo=True)
+    monkeypatch.setattr(driver, "refresca", lambda ttl: (200, dict(WIRE_HIJO)))
+    monkeypatch.setattr(driver, "consulta", _consulta_en_cola(
+        [(200, dict(WHOAMI)), (503, {})],
+        dict(MAPA_BASE)))
+
+    codigo = driver.corre()
+
+    assert codigo == D.EX_SESION_EXPIRADA
+    assert driver._token == "TK-SECRETO-123", "sin validación no hay adopción"
+    salida = capsys.readouterr().out
+    assert "whoami del hijo HTTP 503" in salida
+    sesion = json.loads((tmp_path / "sesion.json").read_text())
+    assert sesion["estado"] == "identidad_rotada"
+
+
+def test_continuo_recibo_ilegible_no_adopta_nada(monkeypatch, tmp_path):
+    """Veredicto corto de `_renueva` con recibo incompleto: ni token ni plazo.
+    (El recibo devuelto puede haber rotado la sesión: la parada es `rotada`,
+    no `fallo` — el camino completo por `corre` está en el caso siguiente.)"""
+    driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=99, continuo=True)
+    driver.autentica()
+    monkeypatch.setattr(driver, "refresca",
+                        lambda ttl: (200, {"token": "TK-NUEVO-456"}))
+    veredicto = driver._renueva(_SinCiclos(), None)
+    assert veredicto[0] == "parada" and veredicto[1] == "identidad_rotada"
+    assert driver._token == "TK-SECRETO-123", "sin wire completo no se adopta"
+    assert driver.deadline == 1757000000.0, "el plazo tampoco"
+
+
+class _SinCiclos:
+    def estados(self):
+        return {}
+
+
+def test_continuo_recibo_ilegible_para_visible_por_corre(
+        monkeypatch, tmp_path, capsys):
+    """El mismo recibo incompleto, por la vía real (corre): parada visible y
+    ni token ni plazo adoptados."""
+    driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=99, continuo=True)
+    monkeypatch.setattr(driver, "refresca",
+                        lambda ttl: (200, {"token": "TK-NUEVO-456"}))
+    assert driver.corre() == D.EX_SESION_EXPIRADA
+    salida = capsys.readouterr().out
+    assert "recibo de refresco ilegible" in salida
+    sesion = json.loads((tmp_path / "sesion.json").read_text())
+    assert sesion["estado"] == "identidad_rotada"
+    assert driver._token == "TK-SECRETO-123"
+    assert driver.deadline == 1757000000.0
+
+
+def test_continuo_senal_con_fallo_previo_sale_4_y_declara_lo_pendiente(
+        monkeypatch, tmp_path, capsys):
+    def srv(url, cuerpo, clave):
+        driver._parar = True
+        raise T.RespuestaPerdida("sin respuesta")
+
+    driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=2, srv=srv,
+                             continuo=True, margen_s=5.0)
+    assert driver.corre() == D.EX_INCIDENCIAS
+    assert driver.fallos_total == 1
+    salida = capsys.readouterr().out
+    assert "cierre ordenado" in salida and "sin resolver: 1" in salida
+    sesion = json.loads((tmp_path / "sesion.json").read_text())
+    assert sesion["estado"] == "parado_por_senal"
+
+
+def test_continuo_restaura_los_handlers_de_senal_al_salir(
+        monkeypatch, tmp_path):
+    """El driver es un invitado: instala SIGINT/SIGTERM en continuo y los
+    RESTAURA al salir, haya corrido una vuelta o cien."""
+    import signal as signal_mod
+    def srv(url, cuerpo, clave):
+        driver._parar = True
+        return _ok(1, "rti-t")
+
+    driver, _reloj = _driver(monkeypatch, tmp_path, vueltas=99, srv=srv,
+                             continuo=True, margen_s=5.0)
+    previo_int = signal_mod.getsignal(signal_mod.SIGINT)
+    previo_term = signal_mod.getsignal(signal_mod.SIGTERM)
+    centinela_int = lambda s, f: None
+    centinela_term = lambda s, f: None
+    signal_mod.signal(signal_mod.SIGINT, centinela_int)
+    signal_mod.signal(signal_mod.SIGTERM, centinela_term)
+    try:
+        driver.corre()
+        assert signal_mod.getsignal(signal_mod.SIGINT) is centinela_int, \
+            "SIGINT restaurado"
+        assert signal_mod.getsignal(signal_mod.SIGTERM) is centinela_term, \
+            "SIGTERM restaurado"
+    finally:
+        signal_mod.signal(signal_mod.SIGINT, previo_int)
+        signal_mod.signal(signal_mod.SIGTERM, previo_term)
+
+
+def _main_argv(tmp_path, *extra):
+    tok = tmp_path / "tok"
+    tok.write_text("t")
+    os.chmod(tok, 0o600)
+    return ["--base-url", "http://x", "--token-file", str(tok),
+            "--objetivo", "rti-t:42", "--fichero-sesion",
+            str(tmp_path / "s.json"), *extra]
+
+
+def test_ttl_s_fuera_del_contrato_sale_2(tmp_path):
+    for malo in ("29", "3601"):
+        rc = D.main(_main_argv(tmp_path, "--continuo", "--ttl-s", malo))
+        assert rc == D.EX_PRECONDICION, f"ttl_s={malo} viola 30..3600"
+
+
+def test_margen_mayor_o_igual_que_ttl_se_rechaza(tmp_path, monkeypatch):
+    """El margen vive DENTRO del plazo que cada renovación pide: margen >= ttl
+    sería renovar en bucle desde el primer segundo."""
+    with pytest.raises(ValueError, match="margen_s"):
+        D.Driver("http://x", "tk", [("rti-t", 42)],
+                 fichero_sesion="/tmp/no-hace-falta.json", vueltas=1,
+                 intervalo_s=15.0, ttl_s=60, margen_s=60)
+    rc = D.main(_main_argv(tmp_path, "--continuo", "--ttl-s", "60",
+                           "--refresco-margen-s", "60"))
+    assert rc == D.EX_PRECONDICION
+
+
+def test_continuo_y_vueltas_son_excluyentes(tmp_path):
+    rc = D.main(_main_argv(tmp_path, "--continuo", "--vueltas", "3"))
+    assert rc == D.EX_PRECONDICION
+
+
+def test_lee_token_con_techo_de_lectura(tmp_path):
+    """Menor ②a de security: ni una lectura sin cota — el +1 del read es el
+    que detecta el exceso, igual que en el cuerpo HTTP."""
+    tok = tmp_path / "tok"
+    tok.write_text("K" * (D.MAX_BYTES_TOKEN + 1))
+    os.chmod(tok, 0o600)
+    with pytest.raises(D.PrecondicionFallida, match="techo"):
+        D.lee_token(str(tok))
+    tok.write_text("K" * D.MAX_BYTES_TOKEN)
+    assert D.lee_token(str(tok)) == "K" * D.MAX_BYTES_TOKEN
+
+
+def test_lee_token_el_techo_cuenta_BYTES_no_caracteres(tmp_path):
+    """Corrección del REQUEST MARK:codex-supervisor-renovacion-real: el techo
+    se aplica sobre la lectura BINARIA. 3000 'ñ' son 3000 caracteres pero
+    6000 bytes: si el techo contara caracteres, pasaría."""
+    tok = tmp_path / "tok"
+    tok.write_bytes("ñ".encode("utf-8") * 3000)
+    tok.chmod(0o600)
+    assert len("ñ" * 3000) < D.MAX_BYTES_TOKEN, "premisa del caso: cabría en chars"
+    with pytest.raises(D.PrecondicionFallida, match="techo"):
+        D.lee_token(str(tok))

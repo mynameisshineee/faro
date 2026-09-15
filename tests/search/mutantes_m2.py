@@ -69,6 +69,11 @@ De ahí sale todo lo de abajo:
   ejecución: va al `.gitignore`, no al commit. El runner y los tests sí se commitean.
 · **La suite limpia corre PRIMERO** sobre la instantánea. Si el sujeto no está verde, los
   mutantes no significan nada y no se corren.
+· **Un control EN ROJO sin diagnóstico es un muro, no una medida** (CI 34707279649: «1 failed,
+  386 passed» sin nodeid — y la suite directa PASÓ, así que el sospechoso es el montaje del
+  clon, no el producto). Ahora la salida completa del control se conserva DURABLE junto a la
+  evidencia (`.suite-limpia.log`) y el stdout publica funciones y tipo de excepción — sin
+  parámetros ni cuerpos de aserción.
 
 ⛔ No mide tiempos y no es un benchmark.
 """
@@ -130,8 +135,10 @@ MUTANTES: list[tuple[str, str, str, str]] = [
     ("M30 ventana con hasta inclusivo", S,
      "   AND (? IS NULL OR e.ts    < ?)\n", "   AND (? IS NULL OR e.ts   <= ?)\n"),
     ("M06 integrity-check sin rank=1", S,
-     "\"INSERT INTO search_fts(search_fts, rank) VALUES('integrity-check', 1)\")",
-     "\"INSERT INTO search_fts(search_fts) VALUES('integrity-check')\")"),
+     "            self.con.execute(\n"
+     "                \"INSERT INTO search_fts(search_fts, rank) VALUES('integrity-check', 1)\")",
+     "            self.con.execute(\n"
+     "                \"INSERT INTO search_fts(search_fts) VALUES('integrity-check')\")"),
     ("M07 rid sin AUTOINCREMENT", S, "rid    INTEGER PRIMARY KEY AUTOINCREMENT",
      "rid    INTEGER PRIMARY KEY"),
     ("M27 borrar el mapeo al borrar", S,
@@ -140,7 +147,11 @@ MUTANTES: list[tuple[str, str, str, str]] = [
      " WHERE ledger = old.ledger AND eid = old.eid;\nEND;\n\nCREATE TRIGGER IF NOT EXISTS search_au_body"),
     ("M40 vista sin la UDF", S, "SELECT d.rid AS rowid, llminbox_proyecta(e.body) AS body",
      "SELECT d.rid AS rowid, e.body AS body"),
-    ("M44 readiness sin huellas", S, "            if distintos:", "            if False:"),
+    ("M44 readiness sin huellas", S,
+     "                    if distintos:\n"
+     "                        problemas.append(\"huella distinta en: \" + \", \".join(distintos))",
+     "                    if False:\n"
+     "                        problemas.append(\"huella distinta en: \" + \", \".join(distintos))"),
     ("M46 readiness sin normalizador", S,
      "        if norma is not None and norma != sc.normalizer_fingerprint():",
      "        if False:"),
@@ -212,8 +223,8 @@ MUTANTES: list[tuple[str, str, str, str]] = [
     ("M10 readiness ignora rebuild viejo", S,
      'problemas.append(f"schema_v={v} < {SEARCH_SCHEMA_V} (rebuild viejo)")', "pass"),
     ("M45 readiness sin generacion", S,
-     '        if gen is None:\n            problemas.append("sin generación sellada")',
-     '        if False:\n            problemas.append("sin generación sellada")'),
+     '        if gen is None:\n            return "sin generación sellada"',
+     '        if False:\n            return "sin generación sellada"'),
     ("M21 fusible desactivado", S,
      '                estado["disparado"] = True\n                return 1',
      "                return 0"),
@@ -250,7 +261,8 @@ MUTANTES: list[tuple[str, str, str, str]] = [
     ("M61 readiness sin comparar DDL", S,
      "        problemas.extend(self._desajustes_ddl())", "        problemas.extend([])"),
     ("M62 DDL solo en una direccion", S,
-     '        for nombre in sorted(set(esperado) - set(vivo)):\n            problemas.append(f"falta {nombre}")',
+     '        for identidad in sorted(set(esperado) - set(vivo)):\n'
+     '            problemas.append(f"falta {_etiqueta_objeto(identidad)}")',
      "        pass"),
     ("M63 huellas: parseo no fail-closed", S,
      "            if not isinstance(esperadas, dict) or not esperadas:", "            if False:"),
@@ -330,8 +342,12 @@ MUTANTES: list[tuple[str, str, str, str]] = [
      "WHEN 1 BEGIN"),
     # ── M2-9: storage durable, migración cerrada y FTS antes del rebuild ─────────
     ("M87 schema_v acepta BLOB con bytes numericos", S,
-     '        if storage != "text":\n            raise SearchSchemaCorrupt(',
-     '        if False:\n            raise SearchSchemaCorrupt('),
+     '        if storage != "text":\n'
+     '            raise clase(\n'
+     '                f"{k} corrupto: storage class {storage!r}, se esperaba \'text\'")',
+     '        if False:\n'
+     '            raise clase(\n'
+     '                f"{k} corrupto: storage class {storage!r}, se esperaba \'text\'")'),
     ("M88 cualquier OperationalError parece tabla ausente", S,
      '        return str(e) == "no such table: search_state"',
      "        return True"),
@@ -346,9 +362,11 @@ MUTANTES: list[tuple[str, str, str, str]] = [
      "            if version != SEARCH_SCHEMA_V1:", "            if False:"),
     ("M91 migracion no compara cuerpos DDL v1", S,
      "            if distintos:\n                raise SearchMigrationRejected(\n"
-     '                    "DDL v1 desconocido; cuerpo distinto en: " + ", ".join(distintos))',
+     "                    \"DDL v1 desconocido; cuerpo distinto en: \"\n"
+     "                    + \", \".join(_etiqueta_objeto(i) for i in distintos))",
      "            if False:\n                raise SearchMigrationRejected(\n"
-     '                    "DDL v1 desconocido; cuerpo distinto en: " + ", ".join(distintos))'),
+     "                    \"DDL v1 desconocido; cuerpo distinto en: \"\n"
+     "                    + \", \".join(_etiqueta_objeto(i) for i in distintos))"),
     ("M92 migracion no exige huellas v1", S,
      "            if huellas != huellas_v1:", "            if False:"),
     ("M93 migracion no rota generacion", S,
@@ -764,12 +782,15 @@ def _nodeids_fallidos(salida: str) -> list[str]:
     return fuera
 
 
-def _corre_pytest(cwd: str, nodeids: list | None = None) -> tuple[int, str, list]:
+def _corre_pytest(cwd: str, nodeids: list | None = None,
+                  salida_completa: list | None = None) -> tuple[int, str, list]:
     """Suite en su PROPIO grupo de procesos, con timeout y `killpg` acotado.
 
     Con `nodeids`, corre EXACTAMENTE esos y nada más: es la corrida DIRIGIDA con la que se
     comprueba que los tests que dicen matar a un mutante lo matan de verdad y no fue una
-    intermitencia de otro sitio.
+    intermitencia de otro sitio. Con `salida_completa` (lista mutable), DEJA la salida
+    íntegra del pytest línea a línea: es lo que el control del snapshot necesita para
+    conservar el diagnóstico de un rojo — el `rc` solo no nombra test ni causa.
     """
     # El `Popen` va DENTRO del `try`. Fuera, había una ventana real: una señal entregada
     # entre que `Popen` devuelve el hijo y que se entra al bloque dejaba un pytest
@@ -790,6 +811,8 @@ def _corre_pytest(cwd: str, nodeids: list | None = None) -> tuple[int, str, list
         # dejaban al hijo suelto, y son exactamente los dos que más se dan al abortar.
         _mata(proc)
         raise
+    if salida_completa is not None:
+        salida_completa.extend((salida or "").splitlines())
     cola = [l for l in (salida or "").strip().splitlines()
             if "passed" in l or "failed" in l or "error" in l]
     return (proc.returncode, (cola[-1] if cola else f"rc={proc.returncode}"),
@@ -881,12 +904,15 @@ def _permisos(raiz: str, *, escribible: bool) -> None:
     LECTURA: correr la suite dentro de ella la contamina (`__pycache__`, `.pytest_cache`,
     ficheros temporales de los tests) y a partir de ahí cada mutante nace de un sujeto
     que ya no es el que se hasheó. Read-only convierte esa contaminación en un error
-    ruidoso en vez de en una deriva silenciosa."""
+    ruidoso en vez de en una deriva silenciosa. Los bits de ejecución se
+    conservan: congelar no debe volver inejecutable el CLI que prueba la suite."""
     dmode, fmode = (0o755, 0o644) if escribible else (0o555, 0o444)
     for base_dir, dirs, ficheros in os.walk(raiz, topdown=not escribible):
         for f in ficheros:
             with contextlib.suppress(OSError):
-                os.chmod(os.path.join(base_dir, f), fmode)
+                ruta = os.path.join(base_dir, f)
+                ejecutable = os.stat(ruta).st_mode & 0o111
+                os.chmod(ruta, fmode | ejecutable)
         for d in dirs:
             with contextlib.suppress(OSError):
                 os.chmod(os.path.join(base_dir, d), dmode)
@@ -1076,18 +1102,56 @@ def _corrida(estado, seleccion, sujeto, base, snapshot, salida) -> int:
         # los 98 mutantes no era ya el que se hasheó. El clon se borra y la prístina no
         # se toca (además de estar en sólo lectura, que convierte el intento en error).
         limpio = _clon(snapshot, os.path.join(base, "_suite_limpia"))
+        salida_limpia: list[str] = []
         try:
-            rc, detalle, fallidos_limpia = _corre_pytest(limpio)
+            rc, detalle, fallidos_limpia = _corre_pytest(
+                limpio, salida_completa=salida_limpia)
         finally:
             _permisos(limpio, escribible=True)
             shutil.rmtree(limpio, ignore_errors=True)
         estado["suite_limpia"] = {"rc": rc, "detalle": detalle,
                                   "fallidos": fallidos_limpia}
-        _vuelca(estado, salida)
         if rc != 0:
+            # Diagnosticar ANTES de declarar: un rojo sin nombre es un muro, y el que
+            # llega detrás no puede distinguir defecto de producto de defecto de
+            # MONTAJE del clon (sin `.git`, rutas de `mkdtemp`). La salida íntegra se
+            # conserva junto a la evidencia; al stdout sólo salen funciones y tipo
+            # de excepción. Los parámetros y mensajes pueden contener datos del test.
+            log = salida.with_name(salida.name + ".suite-limpia.log")
+            log_guardado = False
+            try:
+                with open(log, "w", encoding="utf-8") as fh:
+                    fh.write("".join(l + "\n" for l in salida_limpia))
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                log_guardado = True
+            except OSError as e:
+                print(f"  AVISO: no pude conservar la salida completa "
+                      f"({type(e).__name__})")
+            nombrados = [l for l in salida_limpia
+                         if l.startswith(("FAILED ", "ERROR "))]
+            print("  Control del snapshot limpio en ROJO")
+            if log_guardado:
+                print(f"    salida completa conservada en {log.name}")
+            else:
+                print("    salida completa NO conservada")
+            if nombrados:
+                for l in nombrados:
+                    nombre, _, causa = l.partition(" - ")
+                    nombre = nombre.split("[", 1)[0]
+                    nombre = "".join(c for c in nombre if c.isprintable())[:240]
+                    tipo = causa.split(":", 1)[0].strip()
+                    if not tipo.replace(".", "").isidentifier():
+                        tipo = "tipo no indicado"
+                    print(f"    {nombre} - {tipo[:80]}")
+            else:
+                print("    (pytest no emitió líneas FAILED/ERROR; "
+                      "el resumen no nombra test)")
             estado["estado_corrida"] = "SUJETO_EN_ROJO"
             print(f"  SUJETO EN ROJO: rc={rc} {detalle} — no corro mutantes")
+            _vuelca(estado, salida)
             return 1
+        _vuelca(estado, salida)
 
         for nombre, fichero, viejo, nuevo in seleccion:
             clave = nombre.split()[0]

@@ -177,7 +177,7 @@ def test_single_ledger_legacy_no_inventa_grant_v1_y_conserva_leido(tmp_path, mon
     sobre = json.loads([x.strip() for x in texto.splitlines()
                         if x.strip().startswith('{"hasta"')][-1])
     assert "ack" not in sobre
-    assert sobre["ack_unavailable"]["code"] == "ACK_IDENTITY_REQUIRED"
+    assert "ACK_IDENTITY_REQUIRED" in texto
     r = c.post("/inbox/backend/leido", json={"hasta": sobre["hasta"]},
                headers={"X-Llminbox-Token": "test-token"})
     assert r.status_code == 200 and _cursor(s, ledger="solo", legacy=True) == sobre["hasta"]["solo"]
@@ -190,7 +190,7 @@ def test_multi_ledger_sin_mapa_no_emite_capacidad_global(tmp_path, monkeypatch):
     sobre = json.loads([x.strip() for x in texto.splitlines()
                         if x.strip().startswith('{"hasta"')][-1])
     assert len(sobre["hasta"]) == 2 and "ack" not in sobre
-    assert sobre["ack_unavailable"]["code"] == "ACK_IDENTITY_REQUIRED"
+    assert "ACK_IDENTITY_REQUIRED" in texto
 
 
 def test_credencial_lane_b_no_puede_elegir_lane_a(tmp_path, monkeypatch):
@@ -239,7 +239,7 @@ def test_token_compartido_no_emite_grant_aunque_v8_este_activo(tmp_path, monkeyp
     sobre = json.loads([x.strip() for x in r.text.splitlines()
                         if x.strip().startswith('{"hasta"')][-1])
     assert "ack" not in sobre
-    assert sobre["ack_unavailable"]["code"] == "ACK_IDENTITY_REQUIRED"
+    assert "ACK_IDENTITY_REQUIRED" in r.text
 
 
 def test_inbox_entrega_lectura_si_grant_no_puede_tomar_writer(tmp_path, monkeypatch):

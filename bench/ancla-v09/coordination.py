@@ -81,7 +81,6 @@ servicio es la que nunca se prueba».
 from __future__ import annotations
 
 import contextlib
-import datetime
 import fcntl
 import functools
 import hashlib
@@ -108,16 +107,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 # SUPERIOR no se migra ni se toca: se rechaza (ADR-001: «migrations are
 # transactional and never run against a newer unknown version»). Ésa es la
 # mitad del rollback que el código puede garantizar por sí solo.
-DURABLE_V = 7
-
-# Modos de apertura de `Journal.initialize` (ADR-002 D6 · entrada de operador G8).
-# El defecto de la casa es el ESTANDAR: crea si falta y migra si v6, como siempre.
-# `SOLO_EXISTENTE_V7` es la restricción del ACTIVADOR de organización: se aplica
-# DENTRO de la decisión que gobierna el cambio (bajo `_cerrojo_ciclo`, sobre la
-# clasificación recién fotografiada), no en una lectura previa del llamante —
-# la misma brecha que el llamante no puede cerrar por fuera.
-OPEN_MODE_ESTANDAR = "estandar"
-OPEN_MODE_SOLO_EXISTENTE_V7 = "solo_existente_v7"
+DURABLE_V = 6
 
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
 DEFAULT_SESSION_TTL_S = 900
@@ -150,72 +140,6 @@ CAP_SESSION_ADMIN = "session_admin"
 # primero no tiene por qué poder lo segundo. Un operador de cola que además
 # pudiera sellar convertiría un acto de mantenimiento en uno irreversible.
 CAP_ADMISSION_OPERATOR = "admission_operator"
-
-# Capacidades estrechas del control plane de flota (ADR-002). No se derivan del
-# nombre del rol y ninguna implica a las otras.
-CAP_RUNTIME_OBSERVE = "runtime.observe"
-CAP_RUNTIME_RECOVER = "runtime.recover"
-CAP_RUNTIME_READ = "runtime.read"
-CAP_ORGANIZATION_READ = "organization.read"
-CAP_ORGANIZATION_ACTIVATE = "organization.activate"
-
-RUNTIME_STATUSES = frozenset({
-    "absent", "fresh", "stale", "degraded", "stopped", "recovering",
-})
-DETECTOR_STATES = frozenset({
-    "viva-con-progreso", "viva-sin-obligacion", "atascada", "en-bucle",
-    "muda", "sin-armar", "inarmable", "ilegible", "indeterminado",
-    "sensor-mudo",
-})
-RUNTIME_OBSERVATION_KINDS = frozenset({
-    "cycle_ack", "started", "exited", "resource_degraded",
-    "resource_recovered", "recovery_succeeded", "recovery_failed",
-})
-RUNTIME_REASON_CODES = frozenset({
-    "PROCESS_PRESENT", "PROCESS_STARTED", "PROCESS_EXITED",
-    "CPU_SATURATED", "MEMORY_SATURATED", "IO_STALLED",
-    "HEARTBEAT_RECOVERED", "RECOVERY_SUCCEEDED", "RECOVERY_FAILED",
-    "RECOVERY_REQUESTED", "DEADLINE_EXCEEDED", "ORGANIZATION_ACTIVATED",
-})
-RECOVERY_REASON_CODES = frozenset({
-    "OPERATOR_REQUESTED", "STALE_RUNTIME", "DEGRADED_RUNTIME",
-    "STOPPED_RUNTIME",
-})
-RECOVERY_ACTION_CODES = frozenset({"RESTART_RUNTIME"})
-ORGANIZATION_ATTESTATION_STATES = frozenset({
-    "attested", "stale", "unattested",
-})
-ORGANIZATION_POLICY_CODES = frozenset({
-    "STANDARD", "REVIEW_REQUIRED", "HUMAN_APPROVAL_REQUIRED",
-})
-ESCALATION_TRIGGER_CODES = frozenset({
-    "BLOCKED", "REVIEW_REQUIRED", "INCIDENT", "RECOVERY_FAILED",
-})
-MAX_SUPERVISOR_SEQ = (1 << 63) - 1
-MAX_STATUS_SEQ = (1 << 63) - 1
-MAX_CPU_MILLIS = 1_000_000
-MAX_RSS_BYTES = 1 << 50
-MAX_HEARTBEAT_AGE_MS = 31 * 24 * 60 * 60 * 1000
-
-_OBSERVATION_STATUS = {
-    "cycle_ack": "fresh",
-    "started": "fresh",
-    "exited": "stopped",
-    "resource_degraded": "degraded",
-    "resource_recovered": "fresh",
-    "recovery_succeeded": "fresh",
-    "recovery_failed": "degraded",
-}
-_OBSERVATION_REASONS = {
-    "cycle_ack": frozenset({"PROCESS_PRESENT"}),
-    "started": frozenset({"PROCESS_STARTED"}),
-    "exited": frozenset({"PROCESS_EXITED"}),
-    "resource_degraded": frozenset({
-        "CPU_SATURATED", "MEMORY_SATURATED", "IO_STALLED"}),
-    "resource_recovered": frozenset({"HEARTBEAT_RECOVERED"}),
-    "recovery_succeeded": frozenset({"RECOVERY_SUCCEEDED"}),
-    "recovery_failed": frozenset({"RECOVERY_FAILED"}),
-}
 
 # ── BARRERA DE ADMISIÓN ─────────────────────────────────────────────────────
 # Verbos GATEADOS, en tupla CERRADA. Un verbo que nadie decidió gatear no se
@@ -309,9 +233,6 @@ REASON_CODES = frozenset({
     "RECIPIENT_UNRESOLVED",   # destinatario fuera del censo, o censo ausente
     "GRAMMAR_REJECTED",       # cuerpo que la gramática del ledger no admite
     "GRAMMAR_UNAVAILABLE",    # sin autoridad de gramática inyectada
-    "OBSERVATION_SEQUENCE_CONFLICT",
-    "ORGANIZATION_CONFLICT",
-    "RECOVERY_CONFLICT",
     # `D19` cerrado por `@cto` (`00:38:45Z`) sobre adjudicaciones convergentes de
     # `@contratosbik` (`00:18:35`, enmendada `00:24:19`) y `@cpo` (`00:25:21`):
     # una clave con un codepoint fuera de `[\x20-\x7E]` NO es atribución, así que
@@ -560,17 +481,6 @@ class JournalReadOnly(JournalError):
     """
 
 
-class OpenModeRestricted(JournalError):
-    """`initialize` con `open_mode=SOLO_EXISTENTE_V7` y la base no está en v7.
-
-    Se levanta en la comprobación que REALMENTE gobierna el cambio — dentro del
-    cerrojo de ciclo de vida, tras re-fotografiar y re-clasificar, y ANTES de la
-    retención de la instantánea v6 o de `_crear_crash_safe` —: rechazar aquí es
-    rechazar sin haber tocado nada. El valor por defecto de todos los demás
-    llamantes no cambia (ADR-002 D6 · MARK:codex-g8-politica-de-apertura-atomica).
-    """
-
-
 class AuthError(JournalError):
     """Credencial, sesión o generación del mapa no válidas."""
 
@@ -638,41 +548,6 @@ class SchemaIndeterminate(JournalError):
 
 class MigrationFailed(JournalError):
     """La migración no pudo dejar la base íntegra: se deshizo entera."""
-
-
-class MigrationSnapshotRequired(MigrationFailed):
-    """Una v6 no se convierte en v7 sin fotografía retenida y verificada."""
-
-
-class ObservationSequenceConflict(JournalError):
-    """La secuencia del supervisor se repite o retrocede para ese target.
-
-    En el rechazo REGRESIVO/REPETIDO transporta `latest`: el
-    `MAX(supervisor_seq)` ya calculado DENTRO de la misma transacción para
-    la tupla exacta (observer, runtime del observer, generación del
-    observer, lane, target y generación del target) — quien recibe el 409
-    se re-alinea sin segunda consulta. Los demás usos del tipo (p.ej.
-    entrada fuera de rango) se construyen SIN `latest`: `None` es «no
-    aplica». El transporte HTTP (`max_supervisor_seq`) sólo existe cuando
-    `latest` no es `None`.
-    """
-
-    def __init__(self, mensaje: str, *, latest: int | None = None):
-        if latest is not None and (
-                type(latest) is not int or not 1 <= latest <= MAX_SUPERVISOR_SEQ):
-            raise ValueError(
-                "latest debe ser int exacto (nunca bool/None implícito) y "
-                "1 <= latest <= MAX_SUPERVISOR_SEQ")
-        super().__init__(mensaje)
-        self.latest = latest
-
-
-class OrganizationConflict(JournalError):
-    """La revisión organizativa no es íntegra, monótona o lane-local."""
-
-
-class RecoveryConflict(JournalError):
-    """La recuperación no casa con target, generación, idempotencia o fencing."""
 
 
 class GrammarRejected(JournalError):
@@ -841,7 +716,6 @@ class Grammar:
     canonical_kind: Callable[[Any], "str | None"]
     opens_entry: Callable[[str], bool]
     normalize_resource: Callable[[str], str]
-    canonical_agent_kind: Callable[[Any, int], "str | None"] | None = None
     head_max: int = 200
 
 
@@ -1108,35 +982,6 @@ class RollbackStatus:
 
 
 @dataclass(frozen=True)
-class _DatabaseRollbackStatus:
-    """Foto interna DB-wide; nunca se expone como autoridad cliente.
-
-    Restaurar sustituye el fichero SQLite entero, de modo que un certificado
-    lane-scoped no alcanza. Cada lane que aparece en cualquier tabla durable
-    con columna ``lane`` debe consentir explícitamente mediante ambos sellos.
-    """
-
-    lanes: tuple[str, ...]
-    admissions: tuple[AdmissionState, ...]
-    pending: int
-    failed: int
-    durable_v: int
-
-    @property
-    def certifiable(self) -> bool:
-        expected = tuple(
-            (lane, verb) for lane in self.lanes for verb in ADMISSION_VERBS)
-        actual = tuple((state.lane, state.verb) for state in self.admissions)
-        return (
-            bool(self.lanes)
-            and actual == expected
-            and all(state.state == "sealed" for state in self.admissions)
-            and self.pending == 0
-            and self.failed == 0
-        )
-
-
-@dataclass(frozen=True)
 class RollbackCertificate:
     """Evidencia acotada de que un carril sellado no conserva trabajo vivo."""
 
@@ -1145,46 +990,6 @@ class RollbackCertificate:
     outbox: OutboxCounts
     durable_v: int
     certified_at: str
-
-
-@dataclass(frozen=True)
-class MigrationSnapshot:
-    """Referencia citable a una fotografía SQLite pre-v7 de un solo fichero."""
-
-    snapshot_id: str
-    path: str
-    sha256: str
-    source_durable_v: int
-    created_at: str
-
-
-@dataclass(frozen=True)
-class RuntimeObservation:
-    observation_id: str
-    lane: str
-    workload_id: str
-    runtime_instance: str
-    credential_generation: int
-    supervisor_seq: int
-    status: str
-    transition_id: str | None
-    receipt_id: str | None
-    replayed: bool
-    observed_at: str
-
-
-@dataclass(frozen=True)
-class RuntimeRecovery:
-    recovery_id: str
-    command_id: str
-    lane: str
-    workload_id: str
-    runtime_instance: str
-    credential_generation: int
-    transition_id: str
-    receipt_id: str
-    replayed: bool
-    accepted_at: str
 
 
 # ── Esquema ──────────────────────────────────────────────────────────────────
@@ -1273,8 +1078,7 @@ CREATE INDEX IF NOT EXISTS i_ev_lane ON events(lane, n);
 CREATE TABLE IF NOT EXISTS receipts (
   receipt_id   TEXT PRIMARY KEY,
   subject_kind TEXT NOT NULL
-      CHECK (subject_kind IN (
-        'event','command','denial','denial_aggregate','transition')),
+      CHECK (subject_kind IN ('event','command','denial','denial_aggregate')),
   subject_id   TEXT NOT NULL,
   principal_id TEXT REFERENCES principals(principal_id),
   lane         TEXT,
@@ -1558,335 +1362,6 @@ CREATE TABLE IF NOT EXISTS admission_history (
   -- CHECK existe porque esa cura vive en codigo y esta vive en la base.
   CHECK (origin <> 'migration' OR state = 'closed'),
   PRIMARY KEY (lane, verb, epoch));
-
--- v7 · CONTROL PLANE DE FLOTA. Los índices compuestos son padres explícitos
--- de FKs lane-locales; no descansamos en que los ids globales "suelen" ser
--- únicos para afirmar aislamiento.
-CREATE UNIQUE INDEX IF NOT EXISTS u_principal_lane
-  ON principals(lane, principal_id);
-CREATE UNIQUE INDEX IF NOT EXISTS u_runtime_lane
-  ON runtime_sessions(lane, runtime_instance);
-CREATE UNIQUE INDEX IF NOT EXISTS u_runtime_lane_generation
-  ON runtime_sessions(lane, runtime_instance, generation);
-CREATE UNIQUE INDEX IF NOT EXISTS u_runtime_lane_principal
-  ON runtime_sessions(lane, principal_id, runtime_instance);
-CREATE UNIQUE INDEX IF NOT EXISTS u_runtime_lane_principal_generation
-  ON runtime_sessions(lane, principal_id, runtime_instance, generation);
-CREATE UNIQUE INDEX IF NOT EXISTS u_command_lane
-  ON commands(lane, command_id);
-
-CREATE TABLE IF NOT EXISTS organization_revisions (
-  lane              TEXT NOT NULL,
-  revision          INTEGER NOT NULL CHECK (revision > 0),
-  source_sha256     TEXT NOT NULL CHECK (
-      length(source_sha256)=64 AND source_sha256 NOT GLOB '*[^0-9a-f]*'),
-  attestation_state TEXT NOT NULL CHECK (
-      attestation_state IN ('attested','stale','unattested')),
-  active            INTEGER NOT NULL CHECK (active IN (0,1)),
-  activated_by      TEXT NOT NULL,
-  activated_runtime TEXT NOT NULL,
-  activated_at      TEXT NOT NULL,
-  PRIMARY KEY (lane, revision),
-  FOREIGN KEY (lane, activated_by)
-    REFERENCES principals(lane, principal_id),
-  FOREIGN KEY (lane, activated_runtime)
-    REFERENCES runtime_sessions(lane, runtime_instance),
-  FOREIGN KEY (lane, activated_by, activated_runtime)
-    REFERENCES runtime_sessions(lane, principal_id, runtime_instance));
-CREATE UNIQUE INDEX IF NOT EXISTS u_org_active_lane
-  ON organization_revisions(lane) WHERE active=1;
-
-CREATE TABLE IF NOT EXISTS organization_roles (
-  lane        TEXT NOT NULL,
-  revision    INTEGER NOT NULL,
-  role        TEXT NOT NULL,
-  layer       INTEGER NOT NULL CHECK (layer >= 0 AND layer <= 255),
-  policy_code TEXT CHECK (policy_code IN (
-      'STANDARD','REVIEW_REQUIRED','HUMAN_APPROVAL_REQUIRED')),
-  PRIMARY KEY (lane, revision, role),
-  FOREIGN KEY (lane, revision)
-    REFERENCES organization_revisions(lane, revision));
-
-CREATE TABLE IF NOT EXISTS organization_reports (
-  lane        TEXT NOT NULL,
-  revision    INTEGER NOT NULL,
-  role        TEXT NOT NULL,
-  reports_to  TEXT NOT NULL,
-  PRIMARY KEY (lane, revision, role),
-  CHECK (role <> reports_to),
-  FOREIGN KEY (lane, revision, role)
-    REFERENCES organization_roles(lane, revision, role),
-  FOREIGN KEY (lane, revision, reports_to)
-    REFERENCES organization_roles(lane, revision, role));
-
-CREATE TABLE IF NOT EXISTS organization_reviewers (
-  lane          TEXT NOT NULL,
-  revision      INTEGER NOT NULL,
-  role          TEXT NOT NULL,
-  reviewer_role TEXT NOT NULL,
-  PRIMARY KEY (lane, revision, role, reviewer_role),
-  CHECK (role <> reviewer_role),
-  FOREIGN KEY (lane, revision, role)
-    REFERENCES organization_roles(lane, revision, role),
-  FOREIGN KEY (lane, revision, reviewer_role)
-    REFERENCES organization_roles(lane, revision, role));
-
-CREATE TABLE IF NOT EXISTS organization_escalations (
-  lane         TEXT NOT NULL,
-  revision     INTEGER NOT NULL,
-  role         TEXT NOT NULL,
-  trigger_code TEXT NOT NULL CHECK (trigger_code IN (
-      'BLOCKED','REVIEW_REQUIRED','INCIDENT','RECOVERY_FAILED')),
-  target_role  TEXT NOT NULL,
-  PRIMARY KEY (lane, revision, role, trigger_code, target_role),
-  CHECK (role <> target_role),
-  FOREIGN KEY (lane, revision, role)
-    REFERENCES organization_roles(lane, revision, role),
-  FOREIGN KEY (lane, revision, target_role)
-    REFERENCES organization_roles(lane, revision, role));
-
-CREATE TABLE IF NOT EXISTS expected_workloads (
-  lane                  TEXT NOT NULL,
-  organization_revision INTEGER NOT NULL,
-  workload_id           TEXT NOT NULL,
-  role                  TEXT NOT NULL,
-  principal_id          TEXT,
-  runtime_instance      TEXT,
-  credential_generation INTEGER,
-  PRIMARY KEY (lane, organization_revision, workload_id),
-  CHECK ((runtime_instance IS NULL AND credential_generation IS NULL)
-      OR (runtime_instance IS NOT NULL AND credential_generation IS NOT NULL)),
-  CHECK (runtime_instance IS NULL OR principal_id IS NOT NULL),
-  FOREIGN KEY (lane, organization_revision, role)
-    REFERENCES organization_roles(lane, revision, role),
-  FOREIGN KEY (lane, principal_id)
-    REFERENCES principals(lane, principal_id),
-  FOREIGN KEY (lane, runtime_instance, credential_generation)
-    REFERENCES runtime_sessions(lane, runtime_instance, generation),
-  FOREIGN KEY (lane, principal_id, runtime_instance, credential_generation)
-    REFERENCES runtime_sessions(
-      lane, principal_id, runtime_instance, generation));
-CREATE UNIQUE INDEX IF NOT EXISTS u_expected_runtime
-  ON expected_workloads(lane, organization_revision, runtime_instance)
-  WHERE runtime_instance IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS u_expected_target
-  ON expected_workloads(lane, organization_revision, workload_id,
-                        runtime_instance, credential_generation);
-CREATE UNIQUE INDEX IF NOT EXISTS u_expected_binding
-  ON expected_workloads(lane, organization_revision, workload_id, principal_id,
-                        runtime_instance, credential_generation);
-
--- Una recovery NO tiene estado propio: liga idempotencia y fencing a UN
--- `commands.command_id`; la máquina existente de commands sigue siendo la
--- única autoridad de ciclo de vida.
-CREATE TABLE IF NOT EXISTS runtime_recoveries (
-  recovery_id          TEXT PRIMARY KEY,
-  lane                 TEXT NOT NULL,
-  organization_revision INTEGER NOT NULL,
-  workload_id          TEXT NOT NULL,
-  target_runtime_instance TEXT NOT NULL,
-  target_generation    INTEGER NOT NULL,
-  requester_principal  TEXT NOT NULL,
-  requester_runtime    TEXT NOT NULL,
-  requester_generation INTEGER NOT NULL,
-  verb                 TEXT NOT NULL CHECK (verb='runtime.recover'),
-  idempotency_key      TEXT NOT NULL,
-  req_hash             TEXT NOT NULL CHECK (
-      length(req_hash)=64 AND req_hash NOT GLOB '*[^0-9a-f]*'),
-  reason_code          TEXT NOT NULL CHECK (reason_code IN (
-      'OPERATOR_REQUESTED','STALE_RUNTIME','DEGRADED_RUNTIME','STOPPED_RUNTIME')),
-  action_code          TEXT NOT NULL CHECK (action_code='RESTART_RUNTIME'),
-  fenced_resource      TEXT NOT NULL,
-  fencing_token        INTEGER NOT NULL CHECK (fencing_token > 0),
-  command_id           TEXT NOT NULL UNIQUE REFERENCES commands(command_id),
-  accepted_at          TEXT NOT NULL,
-  UNIQUE (requester_principal, lane, verb, idempotency_key),
-  FOREIGN KEY (lane, organization_revision, workload_id)
-    REFERENCES expected_workloads(lane, organization_revision, workload_id),
-  FOREIGN KEY (lane, target_runtime_instance, target_generation)
-    REFERENCES runtime_sessions(lane, runtime_instance, generation),
-  FOREIGN KEY (lane, requester_principal)
-    REFERENCES principals(lane, principal_id),
-  FOREIGN KEY (lane, requester_runtime, requester_generation)
-    REFERENCES runtime_sessions(lane, runtime_instance, generation),
-  -- Las tres asociaciones de recovery quedan acreditadas con su lane y su
-  -- identidad completas; los ids simples no son una frontera de aislamiento.
-  FOREIGN KEY (lane, organization_revision, workload_id,
-               target_runtime_instance, target_generation)
-    REFERENCES expected_workloads(
-      lane, organization_revision, workload_id,
-      runtime_instance, credential_generation),
-  FOREIGN KEY (lane, requester_principal, requester_runtime,
-               requester_generation)
-    REFERENCES runtime_sessions(
-      lane, principal_id, runtime_instance, generation),
-  FOREIGN KEY (lane, command_id)
-    REFERENCES commands(lane, command_id));
-
-CREATE TABLE IF NOT EXISTS runtime_observations (
-  observation_id       TEXT PRIMARY KEY,
-  lane                 TEXT NOT NULL,
-  organization_revision INTEGER NOT NULL,
-  workload_id          TEXT NOT NULL,
-  target_runtime_instance TEXT NOT NULL,
-  target_generation    INTEGER NOT NULL,
-  observer_principal   TEXT NOT NULL,
-  observer_runtime     TEXT NOT NULL,
-  observer_generation  INTEGER NOT NULL,
-  verb                 TEXT NOT NULL CHECK (verb='runtime.observe'),
-  idempotency_key      TEXT NOT NULL,
-  req_hash             TEXT NOT NULL CHECK (
-      length(req_hash)=64 AND req_hash NOT GLOB '*[^0-9a-f]*'),
-  supervisor_seq       INTEGER NOT NULL CHECK (
-      supervisor_seq > 0 AND supervisor_seq <= 9223372036854775807),
-  observation_kind     TEXT NOT NULL CHECK (observation_kind IN (
-      'cycle_ack','started','exited','resource_degraded','resource_recovered',
-      'recovery_succeeded','recovery_failed')),
-  reason_code          TEXT NOT NULL CHECK (reason_code IN (
-      'PROCESS_PRESENT','PROCESS_STARTED','PROCESS_EXITED','CPU_SATURATED',
-      'MEMORY_SATURATED','IO_STALLED','HEARTBEAT_RECOVERED',
-      'RECOVERY_SUCCEEDED','RECOVERY_FAILED')),
-  detector_state       TEXT CHECK (detector_state IN (
-      'viva-con-progreso','viva-sin-obligacion','atascada','en-bucle','muda',
-      'sin-armar','inarmable','ilegible','indeterminado','sensor-mudo')),
-  cpu_millis           INTEGER CHECK (
-      cpu_millis IS NULL OR (cpu_millis >= 0 AND cpu_millis <= 1000000)),
-  rss_bytes            INTEGER CHECK (
-      rss_bytes IS NULL OR (rss_bytes >= 0 AND rss_bytes <= 1125899906842624)),
-  heartbeat_age_ms     INTEGER CHECK (
-      heartbeat_age_ms IS NULL OR
-      (heartbeat_age_ms >= 0 AND heartbeat_age_ms <= 2678400000)),
-  exit_code            INTEGER CHECK (
-      exit_code IS NULL OR (exit_code >= -2147483648 AND exit_code <= 2147483647)),
-  recovery_command_id  TEXT REFERENCES commands(command_id),
-  observed_at          TEXT NOT NULL,
-  CHECK ((observation_kind IN ('recovery_succeeded','recovery_failed')
-          AND recovery_command_id IS NOT NULL)
-      OR (observation_kind NOT IN ('recovery_succeeded','recovery_failed')
-          AND recovery_command_id IS NULL)),
-  CHECK (observer_runtime <> target_runtime_instance),
-  CHECK ((observation_kind='cycle_ack' AND reason_code='PROCESS_PRESENT')
-      OR (observation_kind='started' AND reason_code='PROCESS_STARTED')
-      OR (observation_kind='exited' AND reason_code='PROCESS_EXITED')
-      OR (observation_kind='resource_degraded' AND reason_code IN
-          ('CPU_SATURATED','MEMORY_SATURATED','IO_STALLED'))
-      OR (observation_kind='resource_recovered'
-          AND reason_code='HEARTBEAT_RECOVERED')
-      OR (observation_kind='recovery_succeeded'
-          AND reason_code='RECOVERY_SUCCEEDED')
-      OR (observation_kind='recovery_failed'
-          AND reason_code='RECOVERY_FAILED')),
-  UNIQUE (observer_principal, lane, verb, idempotency_key),
-  UNIQUE (observer_principal, observer_runtime, observer_generation,
-          lane, target_runtime_instance, target_generation, supervisor_seq),
-  FOREIGN KEY (lane, organization_revision, workload_id)
-    REFERENCES expected_workloads(lane, organization_revision, workload_id),
-  FOREIGN KEY (lane, target_runtime_instance, target_generation)
-    REFERENCES runtime_sessions(lane, runtime_instance, generation),
-  FOREIGN KEY (lane, observer_principal)
-    REFERENCES principals(lane, principal_id),
-  FOREIGN KEY (lane, observer_runtime, observer_generation)
-    REFERENCES runtime_sessions(lane, runtime_instance, generation),
-  FOREIGN KEY (lane, organization_revision, workload_id,
-               target_runtime_instance, target_generation)
-    REFERENCES expected_workloads(
-      lane, organization_revision, workload_id,
-      runtime_instance, credential_generation),
-  FOREIGN KEY (lane, observer_principal, observer_runtime,
-               observer_generation)
-    REFERENCES runtime_sessions(
-      lane, principal_id, runtime_instance, generation),
-  FOREIGN KEY (lane, recovery_command_id)
-    REFERENCES commands(lane, command_id));
-CREATE INDEX IF NOT EXISTS i_runtime_observation_target
-  ON runtime_observations(lane, workload_id, target_runtime_instance,
-                          target_generation, supervisor_seq);
-
-CREATE TABLE IF NOT EXISTS runtime_status_transitions (
-  transition_id        TEXT PRIMARY KEY,
-  lane                 TEXT NOT NULL,
-  organization_revision INTEGER NOT NULL,
-  workload_id          TEXT NOT NULL,
-  target_runtime_instance TEXT,
-  target_generation    INTEGER,
-  from_status          TEXT CHECK (from_status IS NULL OR from_status IN (
-      'absent','fresh','stale','degraded','stopped','recovering')),
-  to_status            TEXT NOT NULL CHECK (to_status IN (
-      'absent','fresh','stale','degraded','stopped','recovering')),
-  detector_state       TEXT CHECK (detector_state IN (
-      'viva-con-progreso','viva-sin-obligacion','atascada','en-bucle','muda',
-      'sin-armar','inarmable','ilegible','indeterminado','sensor-mudo')),
-  status_seq           INTEGER NOT NULL CHECK (
-      status_seq > 0 AND status_seq <= 9223372036854775807),
-  cause_kind           TEXT NOT NULL CHECK (cause_kind IN (
-      'organization','observation','deadline','recovery')),
-  cause_id             TEXT NOT NULL,
-  reason_code          TEXT NOT NULL CHECK (reason_code IN (
-      'PROCESS_PRESENT','PROCESS_STARTED','PROCESS_EXITED','CPU_SATURATED',
-      'MEMORY_SATURATED','IO_STALLED','HEARTBEAT_RECOVERED',
-      'RECOVERY_SUCCEEDED','RECOVERY_FAILED','DEADLINE_EXCEEDED',
-      'RECOVERY_REQUESTED','ORGANIZATION_ACTIVATED')),
-  observation_id       TEXT REFERENCES runtime_observations(observation_id),
-  recovery_command_id  TEXT REFERENCES commands(command_id),
-  receipt_id           TEXT NOT NULL UNIQUE REFERENCES receipts(receipt_id),
-  at                   TEXT NOT NULL,
-  CHECK ((target_runtime_instance IS NULL AND target_generation IS NULL)
-      OR (target_runtime_instance IS NOT NULL AND target_generation IS NOT NULL)),
-  CHECK ((cause_kind='observation' AND observation_id IS NOT NULL)
-      OR (cause_kind='recovery' AND observation_id IS NULL
-          AND recovery_command_id IS NOT NULL)
-      OR (cause_kind IN ('organization','deadline')
-          AND observation_id IS NULL AND recovery_command_id IS NULL)),
-  UNIQUE (lane, workload_id, status_seq),
-  FOREIGN KEY (lane, organization_revision, workload_id)
-    REFERENCES expected_workloads(lane, organization_revision, workload_id),
-  FOREIGN KEY (lane, target_runtime_instance, target_generation)
-    REFERENCES runtime_sessions(lane, runtime_instance, generation),
-  FOREIGN KEY (lane, organization_revision, workload_id,
-               target_runtime_instance, target_generation)
-    REFERENCES expected_workloads(
-      lane, organization_revision, workload_id,
-      runtime_instance, credential_generation),
-  FOREIGN KEY (lane, recovery_command_id)
-    REFERENCES commands(lane, command_id));
-
-CREATE TABLE IF NOT EXISTS runtime_status (
-  lane                 TEXT NOT NULL,
-  workload_id          TEXT NOT NULL,
-  organization_revision INTEGER NOT NULL,
-  principal_id         TEXT,
-  role                 TEXT NOT NULL,
-  runtime_instance     TEXT,
-  credential_generation INTEGER,
-  status               TEXT NOT NULL CHECK (status IN (
-      'absent','fresh','stale','degraded','stopped','recovering')),
-  detector_state       TEXT CHECK (detector_state IN (
-      'viva-con-progreso','viva-sin-obligacion','atascada','en-bucle','muda',
-      'sin-armar','inarmable','ilegible','indeterminado','sensor-mudo')),
-  status_seq           INTEGER NOT NULL CHECK (
-      status_seq > 0 AND status_seq <= 9223372036854775807),
-  status_since         TEXT NOT NULL,
-  last_observed_at     TEXT,
-  cause_id             TEXT NOT NULL,
-  transition_id        TEXT NOT NULL UNIQUE
-      REFERENCES runtime_status_transitions(transition_id),
-  receipt_id           TEXT NOT NULL UNIQUE REFERENCES receipts(receipt_id),
-  PRIMARY KEY (lane, workload_id),
-  CHECK ((runtime_instance IS NULL AND credential_generation IS NULL)
-      OR (runtime_instance IS NOT NULL AND credential_generation IS NOT NULL)),
-  CHECK (status='absent' OR
-      (runtime_instance IS NOT NULL AND principal_id IS NOT NULL)),
-  FOREIGN KEY (lane, organization_revision, workload_id)
-    REFERENCES expected_workloads(lane, organization_revision, workload_id),
-  FOREIGN KEY (lane, principal_id)
-    REFERENCES principals(lane, principal_id),
-  FOREIGN KEY (lane, runtime_instance, credential_generation)
-    REFERENCES runtime_sessions(lane, runtime_instance, generation),
-  FOREIGN KEY (lane, organization_revision, workload_id, principal_id,
-               runtime_instance, credential_generation)
-    REFERENCES expected_workloads(
-      lane, organization_revision, workload_id, principal_id,
-      runtime_instance, credential_generation));
 """
 
 
@@ -2112,49 +1587,6 @@ def _foto_estable(base: str, destino: str, *, ahora=time.time) -> dict:
         f"que se gane a reintentos")
 
 
-def _sha256_file(path: str) -> str:
-    """Digest sobre el descriptor abierto, sin seguir enlaces."""
-    return _huella_fd(path)[1]
-
-
-def _fsync_file(path: str) -> None:
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-
-
-def _fsync_dir(path: str) -> None:
-    fd = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-
-
-def _write_json_atomic(path: str, value: Mapping[str, Any]) -> None:
-    """Publica un manifiesto sólo después de persistir todos sus bytes."""
-    directory = os.path.dirname(os.path.abspath(path)) or "."
-    fd, temporary = tempfile.mkstemp(prefix=".llminbox-manifest-", dir=directory)
-    try:
-        payload = _canonical(value).encode("utf-8") + b"\n"
-        with os.fdopen(fd, "wb", closefd=True) as out:
-            fd = -1
-            out.write(payload)
-            out.flush()
-            os.fsync(out.fileno())
-        os.replace(temporary, path)
-        _fsync_dir(directory)
-    finally:
-        if fd >= 0:
-            os.close(fd)
-        try:
-            os.unlink(temporary)
-        except FileNotFoundError:
-            pass
-
-
 # ── MANIFIESTO SEMÁNTICO ────────────────────────────────────────────────────
 # `durable_v` SOLO no acredita nada, y una base con `meta` y nada más tampoco:
 # el sello es una afirmación sobre la forma, así que la forma se COMPRUEBA. Un
@@ -2162,25 +1594,6 @@ def _write_json_atomic(path: str, value: Mapping[str, Any]) -> None:
 def _nombres_columnas(spec: str) -> frozenset[str]:
     """Notación compacta para que el manifiesto completo siga siendo auditable."""
     return frozenset(spec.split())
-
-
-def _sql_forma(sql: str) -> str:
-    """Normaliza sólo presentación; no elimina ningún predicado durable."""
-    value = "".join(line for line in sql.lower().splitlines()
-                    if not line.lstrip().startswith("--"))
-    value = "".join(value.split()).rstrip(";")
-    return value.replace("createtableifnotexists", "createtable", 1)
-
-
-def _table_sql_from_schema(table: str) -> str:
-    clean = "\n".join(line for line in SCHEMA.splitlines()
-                      if not line.strip().startswith("--"))
-    prefix = f"createtable{table}("
-    for statement in clean.split(";"):
-        normalized = _sql_forma(statement)
-        if normalized.startswith(prefix):
-            return normalized
-    raise RuntimeError(_saneado(f"SCHEMA no contiene CREATE TABLE de {table}"))
 
 
 _OBJETOS_V3 = {
@@ -2500,29 +1913,24 @@ _COLUMNAS_V6 = {**_COLUMNAS_V5, "admission_history": _nombres_columnas(
 _PKS_V6 = {**_PKS_V3, "admission_history": ("lane", "verb", "epoch")}
 _ENTEROS_V6 = _ENTEROS_V3 | {("admission_history", "epoch")}
 _NULLABLES_V6 = {**_NULLABLES_V3,
-                 # v4/v5 añadieron TEXT sin NOT NULL; v6 conserva esa forma.
-                 "events": _NULLABLES_V3["events"] | {
-                     "recipients_roles", "recipients_broadcast"},
-                 "leases": _NULLABLES_V3["leases"] | {"resource_literal"},
                  "admission_history": {"operator", "runtime_instance"}}
 
 
 def _formas_v6() -> dict:
-    """Forma exacta de TODA v6, incluidas las columnas añadidas en v4/v5."""
-    formas = {}
-    for tabla, columnas in _COLUMNAS_V6.items():
-        pk = _PKS_V6[tabla]
-        simple = len(pk) == 1
-        formas[tabla] = {}
-        for columna in columnas:
-            tipo = ("INTEGER" if (tabla, columna) in _ENTEROS_V6 else
-                    "REAL" if (tabla, columna) in _REALES_V3 else "TEXT")
-            orden_pk = pk.index(columna) + 1 if columna in pk else 0
-            no_nulo = (columna not in _NULLABLES_V6.get(tabla, set())
-                       and not (simple and orden_pk == 1))
-            formas[tabla][columna] = (
-                tipo, int(no_nulo), orden_pk,
-                _DEFAULTS_V3.get((tabla, columna)))
+    """Deriva de `_FORMAS_V3` y sólo AÑADE. Copiar el diccionario entero dejaría
+    dos fuentes para la misma forma, y la que diverge no da error: da un
+    veredicto."""
+    formas = dict(_FORMAS_V3)
+    tabla = "admission_history"
+    pk = _PKS_V6[tabla]
+    simple = len(pk) == 1
+    formas[tabla] = {}
+    for columna in _COLUMNAS_V6[tabla]:
+        tipo = "INTEGER" if (tabla, columna) in _ENTEROS_V6 else "TEXT"
+        orden_pk = pk.index(columna) + 1 if columna in pk else 0
+        no_nulo = (columna not in _NULLABLES_V6[tabla]
+                   and not (simple and orden_pk == 1))
+        formas[tabla][columna] = (tipo, int(no_nulo), orden_pk, None)
     return formas
 
 
@@ -2544,366 +1952,6 @@ _CHECKS_V6 = {**_CHECKS_V3, "admission_history": {
     "check((origin='migration'andreason_code='schema_migration')or(origin='operator'andreason_code<>'schema_migration'))",
     # …y el que impide que una fila de migración abra nada.
     "check(origin<>'migration'orstate='closed')"}}
-
-
-# ── v7 = control plane durable de ADR-002 ──────────────────────────────────
-_OBJETOS_NUEVOS_V7 = {
-    "organization_revisions", "organization_roles", "organization_reports",
-    "organization_reviewers", "organization_escalations", "expected_workloads",
-    "runtime_recoveries", "runtime_observations", "runtime_status_transitions",
-    "runtime_status",
-}
-_OBJETOS_V7 = _OBJETOS_V6 | _OBJETOS_NUEVOS_V7
-_TABLE_SQL_V7 = {
-    table: _table_sql_from_schema(table)
-    for table in (_OBJETOS_NUEVOS_V7 | {"receipts"})
-}
-_COLUMNAS_V7 = {**_COLUMNAS_V6,
-    "organization_revisions": _nombres_columnas(
-        "lane revision source_sha256 attestation_state active activated_by "
-        "activated_runtime activated_at"),
-    "organization_roles": _nombres_columnas(
-        "lane revision role layer policy_code"),
-    "organization_reports": _nombres_columnas(
-        "lane revision role reports_to"),
-    "organization_reviewers": _nombres_columnas(
-        "lane revision role reviewer_role"),
-    "organization_escalations": _nombres_columnas(
-        "lane revision role trigger_code target_role"),
-    "expected_workloads": _nombres_columnas(
-        "lane organization_revision workload_id role principal_id "
-        "runtime_instance credential_generation"),
-    "runtime_recoveries": _nombres_columnas(
-        "recovery_id lane organization_revision workload_id "
-        "target_runtime_instance target_generation requester_principal "
-        "requester_runtime requester_generation verb idempotency_key req_hash "
-        "reason_code action_code fenced_resource fencing_token command_id accepted_at"),
-    "runtime_observations": _nombres_columnas(
-        "observation_id lane organization_revision workload_id "
-        "target_runtime_instance target_generation observer_principal "
-        "observer_runtime observer_generation verb idempotency_key req_hash "
-        "supervisor_seq observation_kind reason_code detector_state cpu_millis "
-        "rss_bytes heartbeat_age_ms exit_code recovery_command_id observed_at"),
-    "runtime_status_transitions": _nombres_columnas(
-        "transition_id lane organization_revision workload_id "
-        "target_runtime_instance target_generation from_status to_status "
-        "detector_state status_seq cause_kind cause_id reason_code observation_id "
-        "recovery_command_id receipt_id at"),
-    "runtime_status": _nombres_columnas(
-        "lane workload_id organization_revision principal_id role runtime_instance "
-        "credential_generation status detector_state status_seq status_since "
-        "last_observed_at cause_id transition_id receipt_id"),
-}
-_PKS_V7 = {**_PKS_V6,
-    "organization_revisions": ("lane", "revision"),
-    "organization_roles": ("lane", "revision", "role"),
-    "organization_reports": ("lane", "revision", "role"),
-    "organization_reviewers": ("lane", "revision", "role", "reviewer_role"),
-    "organization_escalations": (
-        "lane", "revision", "role", "trigger_code", "target_role"),
-    "expected_workloads": ("lane", "organization_revision", "workload_id"),
-    "runtime_recoveries": ("recovery_id",),
-    "runtime_observations": ("observation_id",),
-    "runtime_status_transitions": ("transition_id",),
-    "runtime_status": ("lane", "workload_id"),
-}
-_ENTEROS_V7 = _ENTEROS_V6 | {
-    ("organization_revisions", "revision"), ("organization_revisions", "active"),
-    ("organization_roles", "revision"), ("organization_roles", "layer"),
-    ("organization_reports", "revision"),
-    ("organization_reviewers", "revision"),
-    ("organization_escalations", "revision"),
-    ("expected_workloads", "organization_revision"),
-    ("expected_workloads", "credential_generation"),
-    ("runtime_recoveries", "organization_revision"),
-    ("runtime_recoveries", "target_generation"),
-    ("runtime_recoveries", "requester_generation"),
-    ("runtime_recoveries", "fencing_token"),
-    ("runtime_observations", "organization_revision"),
-    ("runtime_observations", "target_generation"),
-    ("runtime_observations", "observer_generation"),
-    ("runtime_observations", "supervisor_seq"),
-    ("runtime_observations", "cpu_millis"),
-    ("runtime_observations", "rss_bytes"),
-    ("runtime_observations", "heartbeat_age_ms"),
-    ("runtime_observations", "exit_code"),
-    ("runtime_status_transitions", "organization_revision"),
-    ("runtime_status_transitions", "target_generation"),
-    ("runtime_status_transitions", "status_seq"),
-    ("runtime_status", "organization_revision"),
-    ("runtime_status", "credential_generation"),
-    ("runtime_status", "status_seq"),
-}
-_NULLABLES_V7 = {**_NULLABLES_V6,
-    "events": _NULLABLES_V6["events"] | {
-        "recipients_roles", "recipients_broadcast"},
-    "leases": _NULLABLES_V6["leases"] | {"resource_literal"},
-    "organization_roles": {"policy_code"},
-    "expected_workloads": {"principal_id", "runtime_instance",
-                             "credential_generation"},
-    "runtime_observations": {"detector_state", "cpu_millis", "rss_bytes",
-                              "heartbeat_age_ms", "exit_code",
-                              "recovery_command_id"},
-    "runtime_status_transitions": {"target_runtime_instance",
-                                   "target_generation", "from_status",
-                                   "detector_state", "observation_id",
-                                   "recovery_command_id"},
-    "runtime_status": {"principal_id", "runtime_instance",
-                       "credential_generation", "detector_state",
-                       "last_observed_at"},
-}
-
-
-def _formas_v7() -> dict:
-    formas = {}
-    for tabla, columnas in _COLUMNAS_V7.items():
-        pk = _PKS_V7[tabla]
-        simple = len(pk) == 1
-        formas[tabla] = {}
-        for columna in columnas:
-            tipo = ("INTEGER" if (tabla, columna) in _ENTEROS_V7 else
-                    "REAL" if (tabla, columna) in _REALES_V3 else "TEXT")
-            orden_pk = pk.index(columna) + 1 if columna in pk else 0
-            no_nulo = (columna not in _NULLABLES_V7.get(tabla, set())
-                       and not (simple and orden_pk == 1))
-            formas[tabla][columna] = (
-                tipo, int(no_nulo), orden_pk,
-                _DEFAULTS_V3.get((tabla, columna)))
-    return formas
-
-
-_FORMAS_V7 = _formas_v7()
-_INDICES_V7 = {**_INDICES_V3,
-    "u_principal_lane": ("principals", True, ("lane", "principal_id"), None),
-    "u_runtime_lane": (
-        "runtime_sessions", True, ("lane", "runtime_instance"), None),
-    "u_runtime_lane_generation": (
-        "runtime_sessions", True,
-        ("lane", "runtime_instance", "generation"), None),
-    "u_runtime_lane_principal": (
-        "runtime_sessions", True,
-        ("lane", "principal_id", "runtime_instance"), None),
-    "u_runtime_lane_principal_generation": (
-        "runtime_sessions", True,
-        ("lane", "principal_id", "runtime_instance", "generation"), None),
-    "u_command_lane": (
-        "commands", True, ("lane", "command_id"), None),
-    "u_org_active_lane": (
-        "organization_revisions", True, ("lane",), "whereactive=1"),
-    "u_expected_runtime": (
-        "expected_workloads", True,
-        ("lane", "organization_revision", "runtime_instance"),
-        "whereruntime_instanceisnotnull"),
-    "u_expected_target": (
-        "expected_workloads", True,
-        ("lane", "organization_revision", "workload_id", "runtime_instance",
-         "credential_generation"), None),
-    "u_expected_binding": (
-        "expected_workloads", True,
-        ("lane", "organization_revision", "workload_id", "principal_id",
-         "runtime_instance", "credential_generation"), None),
-    "i_runtime_observation_target": (
-        "runtime_observations", False,
-        ("lane", "workload_id", "target_runtime_instance", "target_generation",
-         "supervisor_seq"), None),
-}
-_UNICOS_V7 = {**_UNICOS_V6,
-    "principals": _UNICOS_V6["principals"] | {("lane", "principal_id")},
-    "runtime_sessions": _UNICOS_V6["runtime_sessions"] | {
-        ("lane", "runtime_instance"),
-        ("lane", "runtime_instance", "generation"),
-        ("lane", "principal_id", "runtime_instance"),
-        ("lane", "principal_id", "runtime_instance", "generation")},
-    "commands": _UNICOS_V6["commands"] | {("lane", "command_id")},
-    "organization_revisions": {("lane", "revision"), ("lane",)},
-    "organization_roles": {("lane", "revision", "role")},
-    "organization_reports": {("lane", "revision", "role")},
-    "organization_reviewers": {("lane", "revision", "role", "reviewer_role")},
-    "organization_escalations": {
-        ("lane", "revision", "role", "trigger_code", "target_role")},
-    "expected_workloads": {
-        ("lane", "organization_revision", "workload_id"),
-        ("lane", "organization_revision", "runtime_instance"),
-        ("lane", "organization_revision", "workload_id", "runtime_instance",
-         "credential_generation"),
-        ("lane", "organization_revision", "workload_id", "principal_id",
-         "runtime_instance", "credential_generation")},
-    "runtime_recoveries": {
-        ("recovery_id",), ("command_id",),
-        ("requester_principal", "lane", "verb", "idempotency_key")},
-    "runtime_observations": {
-        ("observation_id",),
-        ("observer_principal", "lane", "verb", "idempotency_key"),
-        ("observer_principal", "observer_runtime", "observer_generation",
-         "lane", "target_runtime_instance", "target_generation",
-         "supervisor_seq")},
-    "runtime_status_transitions": {
-        ("transition_id",), ("receipt_id",),
-        ("lane", "workload_id", "status_seq")},
-    "runtime_status": {
-        ("lane", "workload_id"), ("transition_id",), ("receipt_id",)},
-}
-_FKS_V7 = {**_FKS_V6,
-    "organization_revisions": {
-        ("activated_by", "principals", "principal_id"),
-        ("activated_runtime", "runtime_sessions", "runtime_instance")},
-    "organization_roles": {("lane", "organization_revisions", "lane"),
-                           ("revision", "organization_revisions", "revision")},
-    "organization_reports": {
-        ("role", "organization_roles", "role"),
-        ("reports_to", "organization_roles", "role")},
-    "organization_reviewers": {
-        ("role", "organization_roles", "role"),
-        ("reviewer_role", "organization_roles", "role")},
-    "organization_escalations": {
-        ("role", "organization_roles", "role"),
-        ("target_role", "organization_roles", "role")},
-    "expected_workloads": {
-        ("role", "organization_roles", "role"),
-        ("principal_id", "principals", "principal_id"),
-        ("runtime_instance", "runtime_sessions", "runtime_instance")},
-    "runtime_recoveries": {
-        ("workload_id", "expected_workloads", "workload_id"),
-        ("target_runtime_instance", "runtime_sessions", "runtime_instance"),
-        ("requester_principal", "principals", "principal_id"),
-        ("requester_runtime", "runtime_sessions", "runtime_instance"),
-        ("command_id", "commands", "command_id")},
-    "runtime_observations": {
-        ("workload_id", "expected_workloads", "workload_id"),
-        ("target_runtime_instance", "runtime_sessions", "runtime_instance"),
-        ("observer_principal", "principals", "principal_id"),
-        ("observer_runtime", "runtime_sessions", "runtime_instance"),
-        ("recovery_command_id", "commands", "command_id")},
-    "runtime_status_transitions": {
-        ("workload_id", "expected_workloads", "workload_id"),
-        ("target_runtime_instance", "runtime_sessions", "runtime_instance"),
-        ("observation_id", "runtime_observations", "observation_id"),
-        ("recovery_command_id", "commands", "command_id"),
-        ("receipt_id", "receipts", "receipt_id")},
-    "runtime_status": {
-        ("workload_id", "expected_workloads", "workload_id"),
-        ("principal_id", "principals", "principal_id"),
-        ("runtime_instance", "runtime_sessions", "runtime_instance"),
-        ("transition_id", "runtime_status_transitions", "transition_id"),
-        ("receipt_id", "receipts", "receipt_id")},
-}
-_FK_GROUPS_V7 = {
-    "organization_revisions": {
-        (("lane", "activated_by"), "principals", ("lane", "principal_id")),
-        (("lane", "activated_runtime"), "runtime_sessions",
-         ("lane", "runtime_instance")),
-        (("lane", "activated_by", "activated_runtime"), "runtime_sessions",
-         ("lane", "principal_id", "runtime_instance"))},
-    "organization_roles": {
-        (("lane", "revision"), "organization_revisions", ("lane", "revision"))},
-    "organization_reports": {
-        (("lane", "revision", "role"), "organization_roles",
-         ("lane", "revision", "role")),
-        (("lane", "revision", "reports_to"), "organization_roles",
-         ("lane", "revision", "role"))},
-    "organization_reviewers": {
-        (("lane", "revision", "role"), "organization_roles",
-         ("lane", "revision", "role")),
-        (("lane", "revision", "reviewer_role"), "organization_roles",
-         ("lane", "revision", "role"))},
-    "organization_escalations": {
-        (("lane", "revision", "role"), "organization_roles",
-         ("lane", "revision", "role")),
-        (("lane", "revision", "target_role"), "organization_roles",
-         ("lane", "revision", "role"))},
-    "expected_workloads": {
-        (("lane", "organization_revision", "role"), "organization_roles",
-         ("lane", "revision", "role")),
-        (("lane", "principal_id"), "principals", ("lane", "principal_id")),
-        (("lane", "runtime_instance", "credential_generation"),
-         "runtime_sessions", ("lane", "runtime_instance", "generation")),
-        (("lane", "principal_id", "runtime_instance", "credential_generation"),
-         "runtime_sessions",
-         ("lane", "principal_id", "runtime_instance", "generation"))},
-    "runtime_recoveries": {
-        (("lane", "organization_revision", "workload_id"), "expected_workloads",
-         ("lane", "organization_revision", "workload_id")),
-        (("lane", "target_runtime_instance", "target_generation"),
-         "runtime_sessions", ("lane", "runtime_instance", "generation")),
-        (("lane", "requester_principal"), "principals", ("lane", "principal_id")),
-        (("lane", "requester_runtime", "requester_generation"),
-         "runtime_sessions", ("lane", "runtime_instance", "generation")),
-        (("lane", "organization_revision", "workload_id",
-          "target_runtime_instance", "target_generation"),
-         "expected_workloads",
-         ("lane", "organization_revision", "workload_id", "runtime_instance",
-          "credential_generation")),
-        (("lane", "requester_principal", "requester_runtime",
-          "requester_generation"), "runtime_sessions",
-         ("lane", "principal_id", "runtime_instance", "generation")),
-        (("lane", "command_id"), "commands", ("lane", "command_id"))},
-    "runtime_observations": {
-        (("lane", "organization_revision", "workload_id"), "expected_workloads",
-         ("lane", "organization_revision", "workload_id")),
-        (("lane", "target_runtime_instance", "target_generation"),
-         "runtime_sessions", ("lane", "runtime_instance", "generation")),
-        (("lane", "observer_principal"), "principals", ("lane", "principal_id")),
-        (("lane", "observer_runtime", "observer_generation"),
-         "runtime_sessions", ("lane", "runtime_instance", "generation")),
-        (("lane", "organization_revision", "workload_id",
-          "target_runtime_instance", "target_generation"),
-         "expected_workloads",
-         ("lane", "organization_revision", "workload_id", "runtime_instance",
-          "credential_generation")),
-        (("lane", "observer_principal", "observer_runtime",
-          "observer_generation"), "runtime_sessions",
-         ("lane", "principal_id", "runtime_instance", "generation")),
-        (("lane", "recovery_command_id"), "commands", ("lane", "command_id"))},
-    "runtime_status_transitions": {
-        (("lane", "organization_revision", "workload_id"), "expected_workloads",
-         ("lane", "organization_revision", "workload_id")),
-        (("lane", "target_runtime_instance", "target_generation"),
-         "runtime_sessions", ("lane", "runtime_instance", "generation")),
-        (("lane", "organization_revision", "workload_id",
-          "target_runtime_instance", "target_generation"),
-         "expected_workloads",
-         ("lane", "organization_revision", "workload_id", "runtime_instance",
-          "credential_generation")),
-        (("lane", "recovery_command_id"), "commands", ("lane", "command_id"))},
-    "runtime_status": {
-        (("lane", "organization_revision", "workload_id"), "expected_workloads",
-         ("lane", "organization_revision", "workload_id")),
-        (("lane", "principal_id"), "principals", ("lane", "principal_id")),
-        (("lane", "runtime_instance", "credential_generation"),
-         "runtime_sessions", ("lane", "runtime_instance", "generation")),
-        (("lane", "organization_revision", "workload_id", "principal_id",
-          "runtime_instance", "credential_generation"), "expected_workloads",
-         ("lane", "organization_revision", "workload_id", "principal_id",
-          "runtime_instance", "credential_generation"))},
-}
-_CHECKS_V7 = {**_CHECKS_V6,
-    "receipts": {"check(subject_kindin('event','command','denial',"
-                 "'denial_aggregate','transition'))"},
-    "organization_revisions": {
-        "check(revision>0)", "check(activein(0,1))",
-        "check(attestation_statein('attested','stale','unattested'))"},
-    "organization_reports": {"check(role<>reports_to)"},
-    "organization_reviewers": {"check(role<>reviewer_role)"},
-    "organization_escalations": {"check(role<>target_role)"},
-    "expected_workloads": {
-        "check((runtime_instanceisnullandcredential_generationisnull)or(runtime_instanceisnotnullandcredential_generationisnotnull))",
-        "check(runtime_instanceisnullorprincipal_idisnotnull)"},
-    "runtime_recoveries": {
-        "check(verb='runtime.recover')", "check(action_code='restart_runtime')",
-        "check(fencing_token>0)"},
-    "runtime_observations": {
-        "check(verb='runtime.observe')",
-        "check(observer_runtime<>target_runtime_instance)",
-        "check(supervisor_seq>0andsupervisor_seq<=9223372036854775807)"},
-    "runtime_status_transitions": {
-        "check(from_statusisnullorfrom_statusin('absent','fresh','stale','degraded','stopped','recovering'))",
-        "check(to_statusin('absent','fresh','stale','degraded','stopped','recovering'))",
-        "check(cause_kindin('organization','observation','deadline','recovery'))"},
-    "runtime_status": {
-        "check(statusin('absent','fresh','stale','degraded','stopped','recovering'))",
-        "check((runtime_instanceisnullandcredential_generationisnull)or(runtime_instanceisnotnullandcredential_generationisnotnull))",
-        "check(status='absent'or(runtime_instanceisnotnullandprincipal_idisnotnull))"},
-}
 
 MANIFIESTOS = {
     1: {"objetos": {"principals", "credential_bindings", "runtime_sessions",
@@ -2942,22 +1990,7 @@ MANIFIESTOS = {
         "unicos": _UNICOS_V6,
         "foreign_keys": _FKS_V6,
         "checks": _CHECKS_V6,
-        "meta": {"durable_v", "pepper_check", "generation"},
-        # v6 es la ÚNICA fuente del salto beta 6→7. Aceptar tablas, índices o
-        # columnas extra como extensiones inocuas permitiría adoptar una media
-        # migración v7 y también certificarla como snapshot de rollback.
-        "exact": True},
-    7: {"objetos": _OBJETOS_V7,
-        "columnas": _COLUMNAS_V7,
-        "formas": _FORMAS_V7,
-        "indices": _INDICES_V7,
-        "unicos": _UNICOS_V7,
-        "foreign_keys": _FKS_V7,
-        "foreign_key_groups": _FK_GROUPS_V7,
-        "checks": _CHECKS_V7,
-        "table_sql": _TABLE_SQL_V7,
-        "meta": {"durable_v", "pepper_check", "generation"},
-        "exact": True},
+        "meta": {"durable_v", "pepper_check", "generation"}},
     4: {"objetos": _OBJETOS_V3,
         "columnas": _COLUMNAS_V4,
         "formas": _FORMAS_V3,
@@ -3002,20 +2035,12 @@ def _clasificar(con: sqlite3.Connection) -> tuple:
     if faltan:
         return ("indeterminada", version,
                 f"dice v{version} y le faltan objetos: {sorted(faltan)}")
-    if man.get("exact") and objetos != man["objetos"]:
-        return ("indeterminada", version,
-                f"dice v{version} y trae objetos no reconocidos: "
-                f"{sorted(objetos - man['objetos'])}")
     for tabla, columnas in man["columnas"].items():
         info_columnas = list(con.execute(f"PRAGMA table_info({tabla})"))
         reales = {c[1] for c in info_columnas}
         if columnas - reales:
             return ("indeterminada", version,
                     f"dice v{version} y a `{tabla}` le faltan {sorted(columnas - reales)}")
-        if man.get("exact") and reales != columnas:
-            return ("indeterminada", version,
-                    f"dice v{version} y `{tabla}` trae columnas no reconocidas: "
-                    f"{sorted(reales - columnas)}")
         formas = man.get("formas", {}).get(tabla)
         if formas:
             forma_real = {c[1]: ((c[2] or "").upper(), int(c[3]), int(c[5]),
@@ -3045,15 +2070,6 @@ def _clasificar(con: sqlite3.Connection) -> tuple:
                 or (fragmento is not None and fragmento not in sql_indice)):
             return ("indeterminada", version,
                     f"dice v{version} y el índice `{nombre}` no conserva su semántica")
-    if man.get("exact"):
-        indices_reales = {r[0] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='index'"
-            " AND name NOT LIKE 'sqlite_autoindex_%'")}
-        if indices_reales != set(man.get("indices", {})):
-            return ("indeterminada", version,
-                    f"dice v{version} y sus índices nombrados no son exactos: "
-                    f"faltan={sorted(set(man.get('indices', {})) - indices_reales)}, "
-                    f"sobran={sorted(indices_reales - set(man.get('indices', {})))}")
     for tabla, esperadas in man.get("unicos", {}).items():
         reales = set()
         for indice in con.execute(f"PRAGMA index_list({tabla})"):
@@ -3074,19 +2090,6 @@ def _clasificar(con: sqlite3.Connection) -> tuple:
             return ("indeterminada", version,
                     f"dice v{version} y `{tabla}` perdió referencias: "
                     f"{sorted(faltan_fks)}")
-    for tabla, esperadas in man.get("foreign_key_groups", {}).items():
-        grupos: dict[int, list[tuple[int, str, str, str]]] = {}
-        for fk in con.execute(f"PRAGMA foreign_key_list({tabla})"):
-            grupos.setdefault(int(fk[0]), []).append(
-                (int(fk[1]), fk[2], fk[3], fk[4]))
-        reales = set()
-        for piezas in grupos.values():
-            ordenadas = sorted(piezas)
-            reales.add((tuple(p[2] for p in ordenadas), ordenadas[0][1],
-                         tuple(p[3] for p in ordenadas)))
-        if esperadas - reales:
-            return ("indeterminada", version,
-                    f"dice v{version} y `{tabla}` perdió FKs compuestas lane-locales")
     for tabla, fragmentos in man.get("checks", {}).items():
         fila = con.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
@@ -3096,14 +2099,6 @@ def _clasificar(con: sqlite3.Connection) -> tuple:
         if faltan_checks:
             return ("indeterminada", version,
                     f"dice v{version} y `{tabla}` perdió restricciones CHECK")
-    for tabla, expected_sql in man.get("table_sql", {}).items():
-        fila = con.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
-            (tabla,)).fetchone()
-        actual_sql = _sql_forma((fila[0] if fila else "") or "")
-        if actual_sql != expected_sql:
-            return ("indeterminada", version,
-                    f"dice v{version} y `{tabla}` no conserva su DDL exacto")
     claves = {r[0] for r in con.execute("SELECT k FROM meta")}
     if man["meta"] - claves:
         return ("indeterminada", version,
@@ -3834,15 +2829,6 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
 
 
-def _control_id(value: Any, field_name: str, *, maximum: int = 160) -> str:
-    """Identificadores de control acotados; nunca aceptan prosa/controles."""
-    if (type(value) is not str or not value or len(value) > maximum
-            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/+@-]*", value) is None):
-        raise OperationInvalid(
-            f"{field_name} debe ser un identificador ASCII acotado")
-    return value
-
-
 class Journal:
     """Estado durable de coordinación. Una instancia = una conexión.
 
@@ -3865,15 +2851,9 @@ class Journal:
                  sensor_factory=None,
                  recipient_resolver: "Callable[[str], tuple[str | None, bool]] | None" = None,
                  grammar: "Grammar | None" = None,
-                 open_mode: str = OPEN_MODE_ESTANDAR,
                  clock=time.time):
         if not pepper:
             raise ValueError("pepper obligatorio: sin él `credential_ref` no es opaco")
-        if open_mode not in (OPEN_MODE_ESTANDAR, OPEN_MODE_SOLO_EXISTENTE_V7):
-            raise ValueError(
-                "open_mode desconocido: valores admitidos 'estandar' y "
-                "'solo_existente_v7'")
-        self._open_mode = open_mode
         self.path = path
         self._pepper = pepper.encode() if isinstance(pepper, str) else pepper
         self._busy_timeout_ms = int(busy_timeout_ms)
@@ -3945,13 +2925,6 @@ class Journal:
         self._inventario_clasificado = None
         self._limpiador = None
         self._degradacion_pendiente = False
-        # Otra instancia puede restaurar la ruta con ``os.replace`` mientras ésta
-        # conserva conexiones thread-local al inode anterior. La detección ocurre
-        # bajo SH, donde NO se puede tomar `_mutex` (initialize usa mutex→EX): sólo
-        # se marca un evento idempotente y se cierra el handle de ESTA hebra. La
-        # transición global de época/estado se hace en `initialize()`, ya fuera de
-        # cualquier operación y bajo `_mutex`.
-        self._identidad_invalidada = threading.Event()
         self._tmpdir_previo = None
         # ÉPOCA. Una conexión cacheada es thread-local, así que `dispose()` o una
         # re-foto del hilo principal NO la tocan: el worker seguía leyendo por un
@@ -4106,10 +3079,6 @@ class Journal:
         if init_con is not None:
             return init_con
         con = getattr(self._local, "con", None)
-        # CADA reutilización se acredita otra vez. Un `Journal` distinto puede
-        # haber restaurado el path después de que este hilo cacheara `con`; época
-        # sólo coordina hilos de ESTA instancia y no ve aquel replace.
-        self._verificar_identidad_operacional(con)
         if con is not None:
             if getattr(self._local, "epoca", None) == self._epoca:
                 return con
@@ -4185,33 +3154,6 @@ class Journal:
         raise JournalNotInitialized(
             f"estado `{self._estado}`: el journal no está listo. Clasificar no es "
             f"inicializar — falta validar el pepper y, si toca, migrar.")
-
-    def _verificar_identidad_operacional(
-            self, con: sqlite3.Connection | None = None) -> None:
-        """Falla cerrado si otra instancia sustituyó la ruta clasificada.
-
-        El llamante operacional ya mantiene SH o EX. Aquí nunca se toma `_mutex`
-        ni se cambia `_estado`: hacerlo bajo SH invertiría mutex→EX de initialize.
-        Se cierra sólo el handle local, se publica un Event idempotente para los
-        demás hilos y la reinicialización explícita hará el cambio global.
-        """
-        changed = self._identidad_invalidada.is_set()
-        if not changed and self._identidad is not None:
-            st = _stat_seguro(self.path)
-            changed = st is None or (st.st_dev, st.st_ino) != self._identidad
-        if not changed:
-            return
-        if con is not None:
-            try:
-                con.close()
-            except sqlite3.Error:
-                pass
-        if getattr(self._local, "con", None) is con:
-            self._local.con = None
-        self._identidad_invalidada.set()
-        raise IdentityChanged(
-            "la ruta del journal cambió de identidad; cierro la conexión cacheada "
-            "y exijo initialize() explícito antes de volver a operar")
 
     def _abrir_snapshot(self) -> sqlite3.Connection:
         """Conexión a la COPIA recuperada, `query_only`. No cachea por sí sola."""
@@ -4430,7 +3372,6 @@ class Journal:
             # dejar puesto.
             if getattr(self.j._local, "init_con", None) is not None:
                 return
-            self.j._verificar_identidad_operacional(self.con)
             if self.j._estado != Journal.READY:
                 raise JournalNotInitialized(
                     f"el journal pasó a `{self.j._estado}` mientras esta "
@@ -4445,7 +3386,7 @@ class Journal:
             # ese fallo TAPARÍA el error de verdad que nos trajo aquí.
             try:
                 self.con.execute("ROLLBACK")
-            except sqlite3.Error:
+            except sqlite3.OperationalError:
                 pass
 
         def __exit__(self, exc_type, exc, tb):
@@ -4542,18 +3483,18 @@ class Journal:
     def _tablas_con_datos(self) -> set:
         """Tablas con al menos una fila. Una ilegible también cuenta: si no puedo
         mirarla, no puedo afirmar que la base esté vacía."""
-        with self._lectura() as (con, _):
-            out = set()
-            for fila in con.execute("SELECT name FROM sqlite_master WHERE type='table'"):
-                t = fila[0] if not isinstance(fila, sqlite3.Row) else fila["name"]
-                if t == "meta" or t.startswith("sqlite_"):
-                    continue
-                try:
-                    if con.execute(f"SELECT 1 FROM {t} LIMIT 1").fetchone():
-                        out.add(t)
-                except sqlite3.OperationalError:
+        con = self._connect()
+        out = set()
+        for fila in con.execute("SELECT name FROM sqlite_master WHERE type='table'"):
+            t = fila[0] if not isinstance(fila, sqlite3.Row) else fila["name"]
+            if t == "meta" or t.startswith("sqlite_"):
+                continue
+            try:
+                if con.execute(f"SELECT 1 FROM {t} LIMIT 1").fetchone():
                     out.add(t)
-            return out
+            except sqlite3.OperationalError:
+                out.add(t)
+        return out
 
     @contextlib.contextmanager
     def _cerrojo_ciclo(self, *, opcional: bool = False):
@@ -4742,231 +3683,6 @@ class Journal:
                 except FileNotFoundError:
                     pass
 
-    def _retain_pre_v7_snapshot_locked(self, source_version: int) -> MigrationSnapshot:
-        """Fotografía SQLite consolidada, retenida antes del primer byte v7.
-
-        El llamante ya posee ``_cerrojo_ciclo`` EX. SQLite ``backup`` incluye
-        el WAL visible en una única imagen consistente; sólo después de cerrar,
-        fsync y verificar se publica el fichero y, por último, su manifiesto.
-        Si cualquier paso falla, la migración no empieza.
-        """
-        if source_version != 6:
-            raise MigrationSnapshotRequired(
-                "la primitiva pre-v7 sólo acepta una fuente sellada durable_v=6")
-        directory = os.path.dirname(os.path.abspath(self.path)) or "."
-        fd, temporary = tempfile.mkstemp(prefix=".llminbox-pre-v7-", dir=directory)
-        os.close(fd)
-        os.unlink(temporary)
-        src = dst = None
-        try:
-            uri = "file:" + os.path.abspath(self.path) + "?mode=ro"
-            src = sqlite3.connect(uri, uri=True,
-                                  timeout=self._busy_timeout_ms / 1000.0,
-                                  isolation_level=None)
-            src.row_factory = sqlite3.Row
-            src.execute("PRAGMA query_only=ON")
-            row = src.execute(
-                "SELECT v FROM meta WHERE k='durable_v'").fetchone()
-            if row is None or int(row["v"]) != 6:
-                raise MigrationSnapshotRequired(
-                    "la fuente cambió antes de fotografiarla: no migro")
-            dst = sqlite3.connect(temporary, isolation_level=None)
-            dst.execute("PRAGMA journal_mode=DELETE")
-            dst.execute("PRAGMA synchronous=FULL")
-            src.backup(dst)
-            if dst.execute("PRAGMA quick_check(1)").fetchone()[0] != "ok":
-                raise MigrationSnapshotRequired(
-                    "la fotografía pre-v7 no supera quick_check")
-            if dst.execute("PRAGMA foreign_key_check").fetchall():
-                raise MigrationSnapshotRequired(
-                    "la fotografía pre-v7 contiene referencias huérfanas")
-            dst.close()
-            dst = None
-            src.close()
-            src = None
-            _fsync_file(temporary)
-            digest = _sha256_file(temporary)
-            snapshot_id = "mgs_" + digest[:32]
-            final = self.path + f".pre-v7-{digest[:16]}.sqlite"
-            if os.path.exists(final):
-                if _sha256_file(final) != digest:
-                    raise MigrationSnapshotRequired(
-                        "el nombre de snapshot retenido existe con otros bytes")
-                os.unlink(temporary)
-            else:
-                os.replace(temporary, final)
-                _fsync_file(final)
-                _fsync_dir(directory)
-            created_at = _now_iso(self._clock())
-            manifest = {
-                "schema": "llminbox.migration-snapshot.v1",
-                "snapshot_id": snapshot_id,
-                "path": os.path.abspath(final),
-                "sha256": digest,
-                "source_durable_v": 6,
-                "target_durable_v": 7,
-                "created_at": created_at,
-            }
-            _write_json_atomic(self.path + ".pre-v7.json", manifest)
-            result = self.migration_snapshot()
-            if result is None or result.sha256 != digest:
-                raise MigrationSnapshotRequired(
-                    "el manifiesto pre-v7 publicado no verifica")
-            return result
-        except (OSError, sqlite3.Error, JournalError) as exc:
-            if isinstance(exc, MigrationSnapshotRequired):
-                raise
-            raise MigrationSnapshotRequired(
-                f"no pude retener la fotografía pre-v7: {exc}") from exc
-        finally:
-            if dst is not None:
-                dst.close()
-            if src is not None:
-                src.close()
-            try:
-                os.unlink(temporary)
-            except FileNotFoundError:
-                pass
-
-    def migration_snapshot(self) -> MigrationSnapshot | None:
-        """Lee y verifica la referencia citable; nunca confía sólo en JSON."""
-        manifest_path = self.path + ".pre-v7.json"
-        try:
-            with open(manifest_path, "r", encoding="utf-8") as src:
-                raw = json.load(src)
-        except FileNotFoundError:
-            return None
-        except (OSError, ValueError) as exc:
-            raise MigrationSnapshotRequired(
-                f"manifiesto pre-v7 ilegible: {exc}") from exc
-        exact = {"schema", "snapshot_id", "path", "sha256", "source_durable_v",
-                 "target_durable_v", "created_at"}
-        if type(raw) is not dict or set(raw) != exact:
-            raise MigrationSnapshotRequired("manifiesto pre-v7 de forma desconocida")
-        path = raw["path"]
-        digest = raw["sha256"]
-        if (raw["schema"] != "llminbox.migration-snapshot.v1"
-                or raw["source_durable_v"] != 6 or raw["target_durable_v"] != 7
-                or type(path) is not str or type(digest) is not str
-                or re.fullmatch(r"[0-9a-f]{64}", digest) is None
-                or raw["snapshot_id"] != "mgs_" + digest[:32]
-                or os.path.dirname(os.path.abspath(path)) !=
-                   os.path.dirname(os.path.abspath(self.path))
-                or os.path.abspath(path) != os.path.abspath(
-                    self.path + f".pre-v7-{digest[:16]}.sqlite")):
-            raise MigrationSnapshotRequired("manifiesto pre-v7 no canónico")
-        try:
-            measured = _sha256_file(path)
-        except OSError as exc:
-            raise MigrationSnapshotRequired(
-                f"snapshot pre-v7 ausente o ilegible: {exc}") from exc
-        if not hmac.compare_digest(measured, digest):
-            raise MigrationSnapshotRequired("digest del snapshot pre-v7 no coincide")
-        return MigrationSnapshot(
-            raw["snapshot_id"], path, digest, 6, raw["created_at"])
-
-    def restore_pre_v7_snapshot(self, token: str, *,
-                                expected_sha256: str) -> MigrationSnapshot:
-        """Restaura los bytes pre-v7 tras acreditar cierre y drenado actuales.
-
-        No arranca ni simula un binario viejo. Al volver deja esta instancia en
-        ``NUEVO``; el consumidor v6 debe abrir la imagen restaurada.
-        """
-        if type(expected_sha256) is not str or re.fullmatch(
-                r"[0-9a-f]{64}", expected_sha256) is None:
-            raise OperationInvalid("expected_sha256 debe ser un SHA-256 canónico")
-        with self._mutex:
-            if self._estado != self.READY:
-                raise JournalNotInitialized("restaurar exige un journal v7 RW y listo")
-            with self._cerrojo_ciclo():
-                self.close()
-                con = sqlite3.connect(self.path,
-                                      timeout=self._busy_timeout_ms / 1000.0,
-                                      isolation_level=None)
-                con.row_factory = sqlite3.Row
-                try:
-                    con.execute("PRAGMA foreign_keys=ON")
-                    con.execute("BEGIN IMMEDIATE")
-                    view = _authenticate_locked(con, token, self._clock())
-                    if view is None:
-                        raise AuthError("restaurar exige sesión válida")
-                    if self._capacidades_locked(con, view.principal_id) != {
-                            CAP_ADMISSION_OPERATOR}:
-                        raise PolicyDenied(
-                            "restaurar exige exactamente admission_operator")
-                    status = self._database_rollback_status_locked(con)
-                    if status.durable_v != 7 or not status.certifiable:
-                        raise AdmissionConflict(
-                            "restaurar exige v7, ambas admisiones sealed en cada "
-                            "carril durable y pending/failed globales en cero")
-                    con.execute("COMMIT")
-                    con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                except BaseException:
-                    try:
-                        con.execute("ROLLBACK")
-                    except sqlite3.Error:
-                        pass
-                    raise
-                finally:
-                    con.close()
-
-                snapshot = self.migration_snapshot()
-                if snapshot is None or not hmac.compare_digest(
-                        snapshot.sha256, expected_sha256):
-                    raise MigrationSnapshotRequired(
-                        "el snapshot solicitado no es el retenido y verificado")
-                check = sqlite3.connect(
-                    "file:" + snapshot.path + "?mode=ro", uri=True,
-                    isolation_level=None)
-                try:
-                    verdict = _clasificar(check)
-                finally:
-                    check.close()
-                if verdict[:2] != ("conocida", 6):
-                    raise MigrationSnapshotRequired(
-                        f"el snapshot ya no acredita v6 exacta: {verdict}")
-
-                directory = os.path.dirname(os.path.abspath(self.path)) or "."
-                fd, temporary = tempfile.mkstemp(
-                    prefix=".llminbox-rollback-v6-", dir=directory)
-                os.close(fd)
-                try:
-                    shutil.copyfile(snapshot.path, temporary)
-                    _fsync_file(temporary)
-                    if _sha256_file(temporary) != snapshot.sha256:
-                        raise MigrationSnapshotRequired(
-                            "la copia de restauración no conserva el digest")
-                    # Tras checkpoint y cierre, los sidecars son reconstruibles;
-                    # quitarlos ANTES del replace evita aplicar WAL v7 a bytes v6.
-                    for suffix in ("-wal", "-shm", "-journal"):
-                        try:
-                            os.unlink(self.path + suffix)
-                        except FileNotFoundError:
-                            pass
-                    os.replace(temporary, self.path)
-                    _fsync_file(self.path)
-                    _fsync_dir(directory)
-                finally:
-                    try:
-                        os.unlink(temporary)
-                    except FileNotFoundError:
-                        pass
-                self._epoca += 1
-                self._estado = self.NUEVO
-                self._veredicto = None
-                self._identidad = None
-                self._inventario_clasificado = None
-                old_tmp = self._tmpdir
-                self._tmpdir = None
-                self._tmpdir_previo = None
-                self._snapshot = None
-                if self._limpiador is not None:
-                    self._limpiador.detach()
-                    self._limpiador = None
-                if old_tmp:
-                    shutil.rmtree(old_tmp, ignore_errors=True)
-                return snapshot
-
     def initialize(self) -> int:
         """Transición única a un estado LISTO. Todo lo demás la exige.
 
@@ -4985,17 +3701,6 @@ class Journal:
           8. y sólo entonces, READY.
         """
         with self._mutex:
-            if self._identidad_invalidada.is_set():
-                # Fuera de SH y bajo el orden mutex→EX que gobierna el ciclo.
-                # La época invalida las conexiones de otros hilos; cada una se
-                # cerrará localmente al volver a tocarla.
-                self.close()
-                self._epoca += 1
-                self._estado = self.NUEVO
-                self._veredicto = None
-                self._identidad = None
-                self._inventario_clasificado = None
-                self._identidad_invalidada.clear()
             if self._degradacion_pendiente:
                 # AQUÍ se consume lo que `_connect()` dejó dicho al fallar
                 # cerrado. Es el «acto explícito y posterior» que sustituye al
@@ -5014,15 +3719,6 @@ class Journal:
             if clase == "indeterminada":
                 raise SchemaIndeterminate(detalle)
             if clase == "nueva":
-                # `SOLO_EXISTENTE_V7` corta AQUÍ la rama de creación: la
-                # clasificación "nueva" puede envejecer, pero crear sólo es
-                # legítimo si el modo lo permite; el re-clasificado de debajo
-                # es para el modo estándar, que conserva su camino intacto.
-                if self._open_mode != OPEN_MODE_ESTANDAR:
-                    raise OpenModeRestricted(
-                        "modo de apertura 'solo_existente_v7': no hay base en "
-                        f"{self.path} y este modo no crea — arrancar o migrar "
-                        "es la operación deliberada del canon v7")
                 with self._cerrojo_ciclo():
                     if _stat_seguro(self.path) is None:
                         v = self._crear_crash_safe()
@@ -5156,34 +3852,6 @@ class Journal:
                 self._pepper_de(con)
                 fila = con.execute("SELECT v FROM meta WHERE k='durable_v'").fetchone()
                 existing = int(fila["v"]) if fila else None
-            # 🔒 LA DECISIÓN QUE GOBERNA EL CAMBIO (modo SOLO_EXISTENTE_V7).
-            #    Éste es el punto: foto nueva, clasificación fresca y cerrojo de
-            #    ciclo de vida en la mano — lo que `existing` dice AQUÍ es lo que
-            #    se migra o no AQUÍ. Corta ANTES de la retención de la
-            #    instantánea v6 (`_retain_pre_v7_snapshot_locked` escribe) y
-            #    antes de `_inicializar_dentro` (migra): rechazar después de
-            #    tocar no es rechazar. La lectura previa del llamante
-            #    (`stored_durable_v`) queda como cortesía de fallo rápido; la
-            #    garantía vive aquí, bajo el mismo cierre que `initialize`.
-            if (existing != DURABLE_V
-                    and self._open_mode == OPEN_MODE_SOLO_EXISTENTE_V7):
-                raise OpenModeRestricted(
-                    "modo de apertura 'solo_existente_v7': la base declara "
-                    f"durable_v={existing} y abrir con initialize() "
-                    f"{'MIGRARÍA 6→' + str(DURABLE_V) if existing == 6 else 'no sabe si crearía o migraría'}"
-                    " — eso es la operación deliberada de "
-                    "docs/V1.0-SCHEMA-V7-MIGRATION, no un efecto de activar")
-            if existing not in (6, DURABLE_V):
-                raise MigrationFailed(
-                    "el contrato beta sólo admite creación nueva, v6→v7 o v7; "
-                    f"durable_v={existing} exige un migrador offline anterior")
-            # v6→v7 NO EMPIEZA sin una imagen SQLite consolidada, retenida y
-            # digest-verificada. Base nueva v7 pasa por `_crear_crash_safe` y no
-            # necesita fingir un "antes" que nunca existió.
-            required_snapshot_sha = None
-            if existing == 6:
-                required_snapshot_sha = self._retain_pre_v7_snapshot_locked(
-                    existing).sha256
             # ③ Y AHORA sí se sondea si la base se deja escribir. El cerrojo se
             #    pudo crear, pero eso NO lo prueba: el `.lifecycle` puede existir
             #    de antes con permisos buenos mientras el `.sqlite` está en 0400.
@@ -5218,8 +3886,7 @@ class Journal:
                 con.execute("PRAGMA foreign_keys=OFF")
                 con.execute("PRAGMA legacy_alter_table=ON")
                 self._local.init_con = con
-                v = self._inicializar_dentro(
-                    existing, required_snapshot_sha=required_snapshot_sha)
+                v = self._inicializar_dentro(existing)
             finally:
                 try:
                     con.execute("PRAGMA legacy_alter_table=OFF")
@@ -5242,8 +3909,7 @@ class Journal:
             self._estado = self.READY
         return v
 
-    def _inicializar_dentro(self, existing: int | None, *,
-                            required_snapshot_sha: str | None = None) -> int:
+    def _inicializar_dentro(self, existing: int | None) -> int:
         with self._tx() as con:
             # 📸 LOS OBJETOS QUE YA HABÍA, ANTES de que el `SCHEMA` cree los que
             # falten. Después de ese bucle, `_existe()` no distingue «esta tabla
@@ -5259,14 +3925,6 @@ class Journal:
                 r[0].lower() for r in con.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                     "   AND name NOT LIKE 'sqlite_%'"))
-            columnas_preexistentes = {
-                table: frozenset(_columnas(con, table))
-                for table in preexistentes
-            }
-            indices_preexistentes = frozenset(
-                r[0].lower() for r in con.execute(
-                    "SELECT name FROM sqlite_master WHERE type='index'"
-                    " AND name NOT LIKE 'sqlite_autoindex_%'"))
             # `executescript()` NO se puede usar aquí: hace COMMIT antes de correr
             # el script, así que se llevaría por delante el `BEGIN IMMEDIATE` y la
             # migración dejaría de ser transaccional sin decirlo. Se ejecutan las
@@ -5282,10 +3940,7 @@ class Journal:
                     "el pepper no es el que creó esta base: recalcularía otros "
                     "`credential_ref` y daría de alta principals nuevos en silencio")
             if existing is not None and existing < DURABLE_V:
-                self._migrar(
-                    con, existing, preexistentes=preexistentes,
-                    columnas_preexistentes=columnas_preexistentes,
-                    indices_preexistentes=indices_preexistentes)
+                self._migrar(con, existing, preexistentes=preexistentes)
             # `foreign_key_check` DENTRO de la transacción y antes del sello: si
             # la migración dejó huérfanos, esto revienta, todo se deshace y la
             # base se queda en su versión anterior con sus datos intactos. Una
@@ -5297,13 +3952,6 @@ class Journal:
                 raise MigrationFailed(
                     f"{len(huerfanos)} referencia(s) huérfana(s) tras migrar "
                     f"({detalle}): deshago y me quedo en v{existing}")
-            if existing == 6:
-                retained = self.migration_snapshot()
-                if (required_snapshot_sha is None or retained is None
-                        or not hmac.compare_digest(
-                            retained.sha256, required_snapshot_sha)):
-                    raise MigrationSnapshotRequired(
-                        "el snapshot pre-v7 dejó de verificar antes del sello")
             con.execute("INSERT OR REPLACE INTO meta(k,v) VALUES('durable_v',?)",
                         (str(DURABLE_V),))
             con.execute("INSERT OR IGNORE INTO meta(k,v) VALUES('generation','1')")
@@ -5313,68 +3961,25 @@ class Journal:
 
     # ── migración de esquema ────────────────────────────────────────────────
     def _migrar(self, con: sqlite3.Connection, desde: int, *,
-                preexistentes: frozenset,
-                columnas_preexistentes: Mapping[str, frozenset],
-                indices_preexistentes: frozenset) -> None:
+                preexistentes: frozenset) -> None:
         """Migra hacia delante. Idempotente, y ENTERA dentro de la transacción
         que la llama: o queda la versión nueva o queda la vieja con sus datos.
 
-        El contrato beta publicado es deliberadamente estrecho: sólo 6→7. Los
-        migradores históricos se conservan como código de referencia, pero no
-        son alcanzables desde `initialize()` y no pueden escribir bytes v7 sin
-        la fotografía pre-v7 que sólo está definida para una fuente v6 exacta.
+        Cada paso mira la FORMA REAL de la tabla en vez de fiarse del número de
+        versión: una base puede venir de cualquier punto intermedio de esta rama
+        —el sello decía `1` en dos esquemas distintos— así que la introspección
+        es la fuente y el número sólo el disparador.
         """
-        if desde != 6:
-            raise MigrationFailed(
-                f"salto durable v{desde}→v7 no soportado por el contrato beta")
-        self._m6_a_7(
-            con, desde=desde, preexistentes=preexistentes,
-            columnas_preexistentes=columnas_preexistentes,
-            indices_preexistentes=indices_preexistentes)
-
-    def _m6_a_7(self, con: sqlite3.Connection, *, desde: int,
-                 preexistentes: frozenset,
-                 columnas_preexistentes: Mapping[str, frozenset],
-                 indices_preexistentes: frozenset) -> None:
-        """Añade el control plane y amplía receipts sin adoptar medias formas.
-
-        El camino certificado es 6→7. Se conservan migraciones antiguas para
-        fixtures históricos, pero sólo una fuente que se declara v6 recibe el
-        guard exacto contra objetos/columnas/índices v7 plantados.
-        """
-        if desde == 6:
-            planted_tables = preexistentes & _OBJETOS_NUEVOS_V7
-            planted_indexes = indices_preexistentes & (
-                set(_INDICES_V7) - set(_INDICES_V3))
-            malformed = {
-                table: sorted(columnas_preexistentes.get(table, frozenset()) -
-                              _COLUMNAS_V6[table])
-                for table in _OBJETOS_V6
-                if columnas_preexistentes.get(table, frozenset()) !=
-                   _COLUMNAS_V6[table]
-            }
-            if planted_tables or planted_indexes or malformed:
-                raise MigrationFailed(
-                    "v6 trae forma parcial/reservada de v7; no la adopto "
-                    f"(tablas={sorted(planted_tables)}, "
-                    f"indices={sorted(planted_indexes)}, "
-                    f"columnas={sorted(malformed)})")
-
-        # CHECK de receipts cambia de forma. Ninguna fila se pierde y todas las
-        # FKs vuelven a apuntar al nombre canónico bajo legacy_alter_table=ON.
-        con.execute("ALTER TABLE receipts RENAME TO receipts_v6")
-        self._recrear(con, "receipts")
-        before = con.execute("SELECT COUNT(*) c FROM receipts_v6").fetchone()["c"]
-        con.execute(
-            "INSERT INTO receipts(receipt_id,subject_kind,subject_id,principal_id,"
-            "lane,current_state,created_at,updated_at)"
-            " SELECT receipt_id,subject_kind,subject_id,principal_id,lane,"
-            "current_state,created_at,updated_at FROM receipts_v6")
-        after = con.execute("SELECT COUNT(*) c FROM receipts").fetchone()["c"]
-        if before != after:
-            raise MigrationFailed(
-                "la reconstrucción de receipts no preservó todas las filas")
-        con.execute("DROP TABLE receipts_v6")
+        if desde < 2:
+            self._m1_a_2(con)
+        if desde < 3:
+            self._m2_a_3(con)
+        if desde < 4:
+            self._m3_a_4(con)
+        if desde < 5:
+            self._m4_a_5(con)
+        if desde < 6:
+            self._m5_a_6(con, preexistentes)
 
     def _m5_a_6(self, con: sqlite3.Connection,
                 preexistentes: frozenset) -> None:
@@ -6187,8 +4792,7 @@ class Journal:
                 outcome = "retry" if getattr(resultado, "replayed", False) else "ok"
                 if not getattr(resultado, "replayed", False):
                     sensor.count("events.accepted", verb=intent.get("verb", "inform"),
-                                 kind=(intent.get("canonical_kind") or
-                                       intent.get("kind", "AMEND")), outcome="ok")
+                                 kind=intent.get("kind", "AMEND"), outcome="ok")
                 sensor.span(
                     "coordination.event.accept",
                     attributes={"event_id": resultado.event_id,
@@ -6607,23 +5211,20 @@ class Journal:
     # a quién y cuándo. Las versiones internas (`_…`) son para el propio módulo,
     # que ya está dentro de la frontera.
     def _receipt(self, receipt_id: str) -> dict | None:
-        with self._lectura() as (con, _):
-            row = con.execute("SELECT * FROM receipts WHERE receipt_id=?",
-                              (receipt_id,)).fetchone()
-            return dict(row) if row else None
+        row = self._connect().execute("SELECT * FROM receipts WHERE receipt_id=?",
+                                      (receipt_id,)).fetchone()
+        return dict(row) if row else None
 
     def _receipt_for_event(self, event_id: str) -> dict | None:
-        with self._lectura() as (con, _):
-            row = con.execute(
-                "SELECT * FROM receipts WHERE subject_kind='event' AND subject_id=?",
-                (event_id,)).fetchone()
-            return dict(row) if row else None
+        row = self._connect().execute(
+            "SELECT * FROM receipts WHERE subject_kind='event' AND subject_id=?",
+            (event_id,)).fetchone()
+        return dict(row) if row else None
 
     def _transitions(self, receipt_id: str) -> list[dict]:
-        with self._lectura() as (con, _):
-            return [dict(r) for r in con.execute(
-                "SELECT * FROM receipt_transitions WHERE receipt_id=? ORDER BY seq",
-                (receipt_id,))]
+        return [dict(r) for r in self._connect().execute(
+            "SELECT * FROM receipt_transitions WHERE receipt_id=? ORDER BY seq",
+            (receipt_id,))]
 
     @contextlib.contextmanager
     def _lectura(self):
@@ -6638,7 +5239,6 @@ class Journal:
         # `dispose()`/re-foto de otra hebra le quita el respaldo por debajo.
         with self._cerrojo_escritor():
             con = self._connect()
-            self._verificar_identidad_operacional(con)
             con.execute("BEGIN")
             try:
                 yield con, None
@@ -6647,7 +5247,6 @@ class Journal:
                 # transacción viva sin exclusión frente al ciclo de vida, que es
                 # justo la ventana que esto cierra.
                 try:
-                    self._verificar_identidad_operacional(con)
                     con.execute("COMMIT")
                 except sqlite3.OperationalError:
                     pass
@@ -7193,24 +5792,11 @@ class Journal:
         `raw_tipo=None`, irrecuperable por filtro (medido por @infra y @sdet).
         """
         g = self._gramatica()
-        semantic = ("canonical_kind" in intent or "kind_registry_rev" in intent)
-        if semantic:
-            canonical = intent.get("canonical_kind")
-            rev = intent.get("kind_registry_rev")
-            if "kind" in intent:
-                raise GrammarRejected("kind legacy y canonical_kind no se pueden mezclar")
-            if (g.canonical_agent_kind is None or type(canonical) is not str
-                    or type(rev) is not int or isinstance(rev, bool)
-                    or g.canonical_agent_kind(canonical, rev) != canonical):
-                raise GrammarRejected(
-                    "canonical_kind/kind_registry_rev no reproducen el registro inyectado")
-            canonico = canonical
-        else:
-            canonico = g.canonical_kind(intent.get("kind"))
-            if not canonico:
-                raise GrammarRejected(
-                    f"`kind`={intent.get('kind')!r} no es un tipo canónico del ledger: "
-                    f"quedaría con `tipo=None` y `raw_tipo=None`, irrecuperable por filtro")
+        canonico = g.canonical_kind(intent.get("kind"))
+        if not canonico:
+            raise GrammarRejected(
+                f"`kind`={intent.get('kind')!r} no es un tipo canónico del ledger: "
+                f"quedaría con `tipo=None` y `raw_tipo=None`, irrecuperable por filtro")
         head = str(intent.get("head", ""))
         if len(head) > g.head_max:
             raise GrammarRejected(
@@ -7956,50 +6542,6 @@ class Journal:
             durable_v=int(version["v"]),
         )
 
-    @classmethod
-    def _database_rollback_status_locked(
-            cls, con: sqlite3.Connection) -> _DatabaseRollbackStatus:
-        """Certificado interno del fichero completo, bajo una sola transacción.
-
-        Las lanes relevantes se derivan de TODA tabla del manifiesto v7 que
-        tenga una columna ``lane``. No vienen de configuración ni del caller:
-        una lane con un solo principal, recibo o historial sigue siendo parte
-        de los bytes que el rollback va a reemplazar. ``_admision_locked``
-        traduce ausencia a ``closed`` para servicio normal; aquí ese resultado
-        NO certifica, porque sólo ``sealed`` explícito constituye consentimiento.
-        """
-        lanes = set()
-        for table in sorted(
-                table for table, columns in _COLUMNAS_V7.items()
-                if "lane" in columns):
-            lanes.update(
-                row["lane"] for row in con.execute(
-                    f"SELECT DISTINCT lane FROM {table}"
-                    " WHERE lane IS NOT NULL AND lane<>''"))
-        ordered_lanes = tuple(sorted(lanes))
-        admissions = tuple(
-            AdmissionState(lane, verb, *cls._admision_locked(con, lane, verb))
-            for lane in ordered_lanes
-            for verb in ADMISSION_VERBS
-        )
-        row = con.execute(
-            "SELECT"
-            " SUM(CASE WHEN state='pending' THEN 1 ELSE 0 END) AS p,"
-            " SUM(CASE WHEN state='failed' THEN 1 ELSE 0 END) AS f"
-            " FROM outbox WHERE state IN ('pending','failed')").fetchone()
-        version = con.execute(
-            "SELECT v FROM meta WHERE k='durable_v'").fetchone()
-        if version is None:
-            raise SchemaIndeterminate(
-                "el journal no declara durable_v; no certifico rollback global")
-        return _DatabaseRollbackStatus(
-            lanes=ordered_lanes,
-            admissions=admissions,
-            pending=0 if row["p"] is None else int(row["p"]),
-            failed=0 if row["f"] is None else int(row["f"]),
-            durable_v=int(version["v"]),
-        )
-
     @_audita
     def rollback_status(self, token: str) -> RollbackStatus:
         """Lee autorización, barreras y cola como una sola foto por carril.
@@ -8256,953 +6798,6 @@ class Journal:
         return self._transicion_admision(
             token, verb, "sealed", reason_code=reason_code,
             expected_epoch=expected_epoch, exigir_drenado=True)
-
-    # ── control plane de flota v7 ───────────────────────────────────────────
-    @staticmethod
-    def _records(value: Sequence[Mapping[str, Any]], keys: set[str],
-                 field_name: str) -> tuple[dict[str, Any], ...]:
-        if type(value) not in (list, tuple):
-            raise OperationInvalid(f"{field_name} debe ser lista o tupla")
-        out = []
-        for item in value:
-            if type(item) is not dict or set(item) != keys:
-                raise OperationInvalid(
-                    f"cada elemento de {field_name} exige exactamente {sorted(keys)}")
-            # Copia profunda canónica: el llamante no puede cambiar lo validado
-            # mientras esperamos BEGIN IMMEDIATE.
-            try:
-                out.append(json.loads(_canonical(item)))
-            except (TypeError, ValueError) as exc:
-                raise OperationInvalid(f"{field_name} no es JSON canónico") from exc
-        return tuple(out)
-
-    @staticmethod
-    def _active_workload_locked(con: sqlite3.Connection, lane: str,
-                                workload_id: str) -> sqlite3.Row | None:
-        return con.execute(
-            "SELECT w.* FROM expected_workloads w"
-            " JOIN organization_revisions o ON o.lane=w.lane"
-            "  AND o.revision=w.organization_revision AND o.active=1"
-            " WHERE w.lane=? AND w.workload_id=?",
-            (lane, workload_id)).fetchone()
-
-    def _runtime_transition_locked(
-            self, con: sqlite3.Connection, *, lane: str, workload: sqlite3.Row,
-            principal_id: str, to_status: str, detector_state: str | None,
-            cause_kind: str, cause_id: str, reason_code: str,
-            observation_id: str | None = None,
-            recovery_command_id: str | None = None,
-            at: str | None = None) -> tuple[str, str, int]:
-        current = con.execute(
-            "SELECT * FROM runtime_status WHERE lane=? AND workload_id=?",
-            (lane, workload["workload_id"])).fetchone()
-        status_seq = (int(current["status_seq"]) if current else 0) + 1
-        if status_seq > MAX_STATUS_SEQ:
-            raise OperationInvalid("status_seq agotó el rango durable")
-        transition_id = _new_id("rst")
-        at = at or _now_iso(self._clock())
-        receipt_id = self._open_receipt(
-            con, "transition", transition_id, principal_id, lane, to_status, at)
-        con.execute(
-            "INSERT INTO runtime_status_transitions(transition_id,lane,"
-            "organization_revision,workload_id,target_runtime_instance,"
-            "target_generation,from_status,to_status,detector_state,status_seq,"
-            "cause_kind,cause_id,reason_code,observation_id,recovery_command_id,"
-            "receipt_id,at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (transition_id, lane, workload["organization_revision"],
-             workload["workload_id"], workload["runtime_instance"],
-             workload["credential_generation"],
-             current["status"] if current else None, to_status, detector_state,
-             status_seq, cause_kind, cause_id, reason_code, observation_id,
-             recovery_command_id, receipt_id, at))
-        con.execute(
-            "INSERT INTO runtime_status(lane,workload_id,organization_revision,"
-            "principal_id,role,runtime_instance,credential_generation,status,"
-            "detector_state,status_seq,status_since,last_observed_at,cause_id,"
-            "transition_id,receipt_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-            " ON CONFLICT(lane,workload_id) DO UPDATE SET"
-            " organization_revision=excluded.organization_revision,"
-            " principal_id=excluded.principal_id,role=excluded.role,"
-            " runtime_instance=excluded.runtime_instance,"
-            " credential_generation=excluded.credential_generation,"
-            " status=excluded.status,detector_state=excluded.detector_state,"
-            " status_seq=excluded.status_seq,status_since=excluded.status_since,"
-            " cause_id=excluded.cause_id,transition_id=excluded.transition_id,"
-            " receipt_id=excluded.receipt_id",
-            (lane, workload["workload_id"], workload["organization_revision"],
-             workload["principal_id"], workload["role"],
-             workload["runtime_instance"], workload["credential_generation"],
-             to_status, detector_state, status_seq, at, None, cause_id,
-             transition_id, receipt_id))
-        return transition_id, receipt_id, status_seq
-
-    @_audita
-    def activate_organization(
-            self, token: str, *, revision: int, source_sha256: str,
-            attestation_state: str,
-            roles: Sequence[Mapping[str, Any]],
-            reports: Sequence[Mapping[str, Any]],
-            reviewers: Sequence[Mapping[str, Any]],
-            escalations: Sequence[Mapping[str, Any]],
-            workloads: Sequence[Mapping[str, Any]]) -> int:
-        """Valida el grafo completo y activa una única revisión lane-local."""
-        self._guard_mutable()
-        if type(revision) is not int or isinstance(revision, bool) or revision <= 0:
-            raise OrganizationConflict("revision debe ser entero positivo")
-        if type(source_sha256) is not str or re.fullmatch(
-                r"[0-9a-f]{64}", source_sha256) is None:
-            raise OrganizationConflict("source_sha256 no es canónico")
-        if attestation_state not in ORGANIZATION_ATTESTATION_STATES:
-            raise OrganizationConflict("attestation_state fuera del vocabulario")
-        roles = self._records(roles, {"role", "layer", "policy_code"}, "roles")
-        reports = self._records(reports, {"role", "reports_to"}, "reports")
-        reviewers = self._records(
-            reviewers, {"role", "reviewer_role"}, "reviewers")
-        escalations = self._records(
-            escalations, {"role", "trigger_code", "target_role"}, "escalations")
-        workloads = self._records(
-            workloads, {"workload_id", "role", "principal_id",
-                        "runtime_instance", "credential_generation"}, "workloads")
-
-        role_names = set()
-        role_layers = {}
-        for row in roles:
-            role = _control_id(row["role"], "role")
-            if role in role_names or type(row["layer"]) is not int or not (
-                    0 <= row["layer"] <= 255):
-                raise OrganizationConflict("rol repetido o layer inválido")
-            if (row["policy_code"] is not None
-                    and row["policy_code"] not in ORGANIZATION_POLICY_CODES):
-                raise OrganizationConflict("policy_code fuera del vocabulario")
-            role_names.add(role)
-            role_layers[role] = row["layer"]
-        if not role_names:
-            raise OrganizationConflict("una organización activa necesita roles")
-        roots = {role for role, layer in role_layers.items() if layer == 0}
-        if len(roots) != 1:
-            raise OrganizationConflict(
-                "el organigrama completo exige exactamente una raíz layer=0")
-
-        parents = {}
-        for edge in reports:
-            child = _control_id(edge["role"], "role")
-            parent = _control_id(edge["reports_to"], "reports_to")
-            if child not in role_names or parent not in role_names or child == parent:
-                raise OrganizationConflict("reports_to propio o hacia rol desconocido")
-            if child in parents:
-                raise OrganizationConflict("un rol sólo puede tener un reports_to")
-            parents[child] = parent
-        root = next(iter(roots))
-        if root in parents or any(
-                role != root and role not in parents for role in role_names):
-            raise OrganizationConflict(
-                "el organigrama está incompleto: sólo la raíz carece de superior")
-        for start in role_names:
-            seen = set()
-            node = start
-            while node in parents:
-                if node in seen:
-                    raise OrganizationConflict("el organigrama contiene un ciclo")
-                seen.add(node)
-                node = parents[node]
-        if any(role_layers[parent] >= role_layers[child]
-               for child, parent in parents.items()):
-            raise OrganizationConflict(
-                "reports_to debe apuntar a una capa estrictamente superior")
-        for edge in reviewers:
-            if (edge["role"] not in role_names or edge["reviewer_role"] not in role_names
-                    or edge["role"] == edge["reviewer_role"]):
-                raise OrganizationConflict("reviewer propio o desconocido")
-        for edge in escalations:
-            if (edge["role"] not in role_names or edge["target_role"] not in role_names
-                    or edge["role"] == edge["target_role"]
-                    or edge["trigger_code"] not in ESCALATION_TRIGGER_CODES):
-                raise OrganizationConflict("escalado inválido o desconocido")
-        workload_ids = set()
-        for workload in workloads:
-            wid = _control_id(workload["workload_id"], "workload_id")
-            if wid in workload_ids or workload["role"] not in role_names:
-                raise OrganizationConflict("workload repetido o con rol desconocido")
-            paired = ((workload["runtime_instance"] is None) ==
-                      (workload["credential_generation"] is None))
-            if not paired:
-                raise OrganizationConflict("runtime y generation deben venir juntos")
-            if (workload["credential_generation"] is not None and
-                    (type(workload["credential_generation"]) is not int or
-                     workload["credential_generation"] <= 0)):
-                raise OrganizationConflict("credential_generation inválida")
-            workload_ids.add(wid)
-
-        at = _now_iso(self._clock())
-        self._tras_precheck()
-        with self._tx() as con:
-            view = _authenticate_locked(con, token, self._clock())
-            if view is None:
-                raise AuthError("sesión invalidada antes de activar organización")
-            self._exigir_capacidad_locked(
-                con, view, CAP_ORGANIZATION_ACTIVATE, "organization.activate")
-            top = con.execute(
-                "SELECT MAX(revision) r FROM organization_revisions WHERE lane=?",
-                (view.lane,)).fetchone()["r"]
-            if top is not None and revision <= int(top):
-                raise OrganizationConflict("revision no monótona")
-            con.execute(
-                "INSERT INTO organization_revisions(lane,revision,source_sha256,"
-                "attestation_state,active,activated_by,activated_runtime,activated_at)"
-                " VALUES(?,?,?,?,0,?,?,?)",
-                (view.lane, revision, source_sha256, attestation_state,
-                 view.principal_id, view.runtime_instance, at))
-            for row in roles:
-                con.execute(
-                    "INSERT INTO organization_roles(lane,revision,role,layer,policy_code)"
-                    " VALUES(?,?,?,?,?)",
-                    (view.lane, revision, row["role"], row["layer"], row["policy_code"]))
-            for row in reports:
-                con.execute(
-                    "INSERT INTO organization_reports(lane,revision,role,reports_to)"
-                    " VALUES(?,?,?,?)",
-                    (view.lane, revision, row["role"], row["reports_to"]))
-            for row in reviewers:
-                con.execute(
-                    "INSERT INTO organization_reviewers(lane,revision,role,reviewer_role)"
-                    " VALUES(?,?,?,?)",
-                    (view.lane, revision, row["role"], row["reviewer_role"]))
-            for row in escalations:
-                con.execute(
-                    "INSERT INTO organization_escalations(lane,revision,role,"
-                    "trigger_code,target_role) VALUES(?,?,?,?,?)",
-                    (view.lane, revision, row["role"], row["trigger_code"],
-                     row["target_role"]))
-            for row in workloads:
-                if row["principal_id"] is not None:
-                    principal = con.execute(
-                        "SELECT role FROM principals WHERE lane=? AND principal_id=?",
-                        (view.lane, row["principal_id"])).fetchone()
-                    if principal is None or principal["role"] != row["role"]:
-                        raise OrganizationConflict(
-                            "principal de workload desconocido o de otro rol/carril")
-                if row["runtime_instance"] is not None:
-                    runtime = con.execute(
-                        "SELECT principal_id,role FROM runtime_sessions WHERE lane=?"
-                        " AND runtime_instance=? AND generation=?",
-                        (view.lane, row["runtime_instance"],
-                         row["credential_generation"])).fetchone()
-                    if (runtime is None or runtime["role"] != row["role"] or
-                            (row["principal_id"] is not None and
-                             runtime["principal_id"] != row["principal_id"])):
-                        raise OrganizationConflict(
-                            "runtime de workload no casa con lane/rol/principal/generación")
-                    if row["principal_id"] is None:
-                        # La identidad sale de la runtime_session; nunca queda
-                        # `fresh` con principal NULL por omisión del snapshot.
-                        row["principal_id"] = runtime["principal_id"]
-                con.execute(
-                    "INSERT INTO expected_workloads(lane,organization_revision,"
-                    "workload_id,role,principal_id,runtime_instance,"
-                    "credential_generation) VALUES(?,?,?,?,?,?,?)",
-                    (view.lane, revision, row["workload_id"], row["role"],
-                     row["principal_id"], row["runtime_instance"],
-                     row["credential_generation"]))
-            con.execute("UPDATE organization_revisions SET active=0 WHERE lane=?",
-                        (view.lane,))
-            con.execute("UPDATE organization_revisions SET active=1"
-                        " WHERE lane=? AND revision=?", (view.lane, revision))
-            for row in workloads:
-                workload = self._active_workload_locked(
-                    con, view.lane, row["workload_id"])
-                self._runtime_transition_locked(
-                    con, lane=view.lane, workload=workload,
-                    principal_id=view.principal_id, to_status="absent",
-                    detector_state=None, cause_kind="organization",
-                    cause_id=f"org:{revision}",
-                    reason_code="ORGANIZATION_ACTIVATED", at=at)
-                con.execute(
-                    "UPDATE runtime_status SET last_observed_at=NULL WHERE lane=?"
-                    " AND workload_id=?",
-                    (view.lane, row["workload_id"]))
-            # Las proyecciones de workloads retirados no se sirven como activos.
-            if workload_ids:
-                marks = ",".join("?" for _ in workload_ids)
-                con.execute(
-                    f"DELETE FROM runtime_status WHERE lane=? AND workload_id NOT IN ({marks})",
-                    (view.lane, *sorted(workload_ids)))
-            else:
-                con.execute("DELETE FROM runtime_status WHERE lane=?", (view.lane,))
-        return revision
-
-    @_audita
-    def record_runtime_observation(
-            self, token: str, *, workload_id: str, runtime_instance: str,
-            idempotency_key: str, supervisor_seq: int, observation_kind: str,
-            reason_code: str, detector_state: str | None = None,
-            cpu_millis: int | None = None, rss_bytes: int | None = None,
-            heartbeat_age_ms: int | None = None, exit_code: int | None = None,
-            recovery_command_id: str | None = None) -> RuntimeObservation:
-        """Persiste observación+proyección+transición+recibo en un solo commit."""
-        self._guard_mutable()
-        workload_id = _control_id(workload_id, "workload_id")
-        runtime_instance = _control_id(runtime_instance, "runtime_instance")
-        idempotency_key = _control_id(idempotency_key, "idempotency_key")
-        if type(supervisor_seq) is not int or isinstance(supervisor_seq, bool) or not (
-                0 < supervisor_seq <= MAX_SUPERVISOR_SEQ):
-            raise ObservationSequenceConflict("supervisor_seq fuera de rango")
-        if observation_kind not in RUNTIME_OBSERVATION_KINDS:
-            raise OperationInvalid("observation_kind fuera del vocabulario")
-        if reason_code not in _OBSERVATION_REASONS[observation_kind]:
-            raise OperationInvalid("reason_code no corresponde a observation_kind")
-        if detector_state is not None and detector_state not in DETECTOR_STATES:
-            raise OperationInvalid("detector_state fuera del vocabulario M3")
-        metrics = {
-            "cpu_millis": (cpu_millis, 0, MAX_CPU_MILLIS),
-            "rss_bytes": (rss_bytes, 0, MAX_RSS_BYTES),
-            "heartbeat_age_ms": (heartbeat_age_ms, 0, MAX_HEARTBEAT_AGE_MS),
-            "exit_code": (exit_code, -(1 << 31), (1 << 31) - 1),
-        }
-        for name, (value, lower, upper) in metrics.items():
-            if value is not None and (type(value) is not int or isinstance(value, bool)
-                                      or not lower <= value <= upper):
-                raise OperationInvalid(f"{name} fuera de rango")
-        if observation_kind in {"recovery_succeeded", "recovery_failed"}:
-            recovery_command_id = _control_id(
-                recovery_command_id, "recovery_command_id")
-        elif recovery_command_id is not None:
-            raise OperationInvalid("sólo un resultado de recovery cita command_id")
-        request = {
-            "workload_id": workload_id, "runtime_instance": runtime_instance,
-            "supervisor_seq": supervisor_seq, "observation_kind": observation_kind,
-            "reason_code": reason_code, "detector_state": detector_state,
-            "cpu_millis": cpu_millis, "rss_bytes": rss_bytes,
-            "heartbeat_age_ms": heartbeat_age_ms, "exit_code": exit_code,
-            "recovery_command_id": recovery_command_id,
-        }
-        req_hash = _sha256(_canonical(request))
-        observed_at = _now_iso(self._clock())
-        self._tras_precheck()
-        with self._tx() as con:
-            view = _authenticate_locked(con, token, self._clock())
-            if view is None:
-                raise AuthError("sesión invalidada antes de observar")
-            self._exigir_capacidad_locked(
-                con, view, CAP_RUNTIME_OBSERVE, "runtime.observe")
-            previous = con.execute(
-                "SELECT * FROM runtime_observations WHERE observer_principal=?"
-                " AND lane=? AND verb='runtime.observe' AND idempotency_key=?",
-                (view.principal_id, view.lane, idempotency_key)).fetchone()
-            if previous is not None:
-                if not hmac.compare_digest(previous["req_hash"], req_hash):
-                    raise IdempotencyConflict(
-                        "misma clave de observación con cuerpo distinto")
-                transition = con.execute(
-                    "SELECT transition_id,receipt_id,to_status"
-                    " FROM runtime_status_transitions"
-                    " WHERE observation_id=?", (previous["observation_id"],)).fetchone()
-                return RuntimeObservation(
-                    previous["observation_id"], view.lane, previous["workload_id"],
-                    previous["target_runtime_instance"],
-                    int(previous["target_generation"]),
-                    int(previous["supervisor_seq"]),
-                    (transition["to_status"] if transition else
-                     _OBSERVATION_STATUS[previous["observation_kind"]]),
-                    transition["transition_id"] if transition else None,
-                    transition["receipt_id"] if transition else None, True,
-                    previous["observed_at"])
-            workload = self._active_workload_locked(con, view.lane, workload_id)
-            if (workload is None or workload["runtime_instance"] != runtime_instance
-                    or workload["credential_generation"] is None):
-                raise SubjectNotFound("runtime target no existe en este carril")
-            # Un sensor no certifica su propio proceso. Runtime es un CHECK
-            # durable; principal necesita esta guarda porque el target principal
-            # vive en expected_workloads y SQLite no permite un CHECK cross-table.
-            if (view.runtime_instance == runtime_instance
-                    or view.principal_id == workload["principal_id"]):
-                raise OperationInvalid(
-                    "el observer y el target deben ser identidades distintas")
-            latest = con.execute(
-                "SELECT MAX(supervisor_seq) s FROM runtime_observations"
-                " WHERE observer_principal=? AND observer_runtime=?"
-                " AND observer_generation=? AND lane=?"
-                " AND target_runtime_instance=? AND target_generation=?",
-                (view.principal_id, view.runtime_instance, view.generation,
-                 view.lane, runtime_instance,
-                 workload["credential_generation"])).fetchone()["s"]
-            if latest is not None and supervisor_seq <= int(latest):
-                raise ObservationSequenceConflict(
-                    "supervisor_seq repetido o regresivo para esta generación target",
-                    latest=int(latest))
-            recovery = None
-            if recovery_command_id is not None:
-                recovery = con.execute(
-                    "SELECT r.*,c.state AS command_state,s.status AS runtime_state,"
-                    " t.recovery_command_id AS active_recovery_command"
-                    " FROM runtime_recoveries r JOIN commands c"
-                    " ON c.command_id=r.command_id JOIN runtime_status s"
-                    " ON s.lane=r.lane AND s.workload_id=r.workload_id"
-                    " JOIN runtime_status_transitions t"
-                    " ON t.transition_id=s.transition_id"
-                    " WHERE r.lane=? AND r.workload_id=?"
-                    " AND r.organization_revision=?"
-                    " AND r.target_runtime_instance=?"
-                    " AND r.target_generation=? AND r.command_id=?",
-                    (view.lane, workload_id, workload["organization_revision"],
-                     runtime_instance, workload["credential_generation"],
-                     recovery_command_id)).fetchone()
-                if (recovery is None or recovery["command_state"] != "executing"
-                        or recovery["runtime_state"] != "recovering"
-                        or recovery["active_recovery_command"] != recovery_command_id):
-                    raise RecoveryConflict(
-                        "el command no es la recovery ejecutándose para este target")
-            observation_id = _new_id("obs")
-            con.execute(
-                "INSERT INTO runtime_observations(observation_id,lane,"
-                "organization_revision,workload_id,target_runtime_instance,"
-                "target_generation,observer_principal,observer_runtime,"
-                "observer_generation,verb,idempotency_key,req_hash,supervisor_seq,"
-                "observation_kind,reason_code,detector_state,cpu_millis,rss_bytes,"
-                "heartbeat_age_ms,exit_code,recovery_command_id,observed_at)"
-                " VALUES(?,?,?,?,?,?,?,?,?,'runtime.observe',?,?,?,?,?,?,?,?,?,?,?,?)",
-                (observation_id, view.lane, workload["organization_revision"],
-                 workload_id, runtime_instance, workload["credential_generation"],
-                 view.principal_id, view.runtime_instance, view.generation,
-                 idempotency_key, req_hash, supervisor_seq, observation_kind,
-                 reason_code, detector_state, cpu_millis, rss_bytes,
-                 heartbeat_age_ms, exit_code, recovery_command_id, observed_at))
-            if recovery is not None:
-                terminal = ("succeeded" if observation_kind == "recovery_succeeded"
-                            else "failed")
-                self._advance_command_receipt_locked(
-                    con, recovery_command_id, terminal, observed_at)
-            current = con.execute(
-                "SELECT s.*,t.reason_code AS transition_reason,"
-                " t.recovery_command_id AS current_recovery_command"
-                " FROM runtime_status s"
-                " JOIN runtime_status_transitions t USING (transition_id)"
-                " WHERE s.lane=? AND s.workload_id=?",
-                (view.lane, workload_id)).fetchone()
-            desired = _OBSERVATION_STATUS[observation_kind]
-            protected_cycle = (observation_kind == "cycle_ack" and current is not None
-                               and current["status"] in {
-                                   "stopped", "degraded", "recovering"})
-            # `recovering` sólo se entra vía `request_runtime_recovery` aceptado
-            # — SIEMPRE hay un command real detrás. Ninguna observación que no
-            # sea el outcome tipado de ESE command puede sacarla de ahí: ni
-            # `cycle_ack` (ya cubierto arriba), ni `started`/`exited`/
-            # `resource_degraded`/`resource_recovered` — un recurso que vuelve
-            # a nivel sano no es un command que se resolvió, y sacar la
-            # proyección de `recovering` por esa vía deja al recovery manual
-            # en curso sin testigo (hallazgo codex/cto, MARK:astra-review-1725-
-            # 20260908 y MARK:astra-supervisor-729-followup-20260908). Fuera de
-            # `recovering` (degraded/stopped/fresh/stale/…) esto no cambia nada:
-            # `resource_recovered` sigue limpiando un `degraded` puro, sin
-            # command de por medio, exactamente como hoy.
-            protected_recovery = (current is not None
-                                  and current["status"] == "recovering"
-                                  and observation_kind not in {
-                                      "recovery_succeeded", "recovery_failed"})
-            if protected_cycle or protected_recovery:
-                desired = current["status"]
-            transition_id = receipt_id = None
-            if (protected_cycle or protected_recovery or current is None
-                    or current["status"] != desired
-                    or current["transition_reason"] != reason_code
-                    or current["detector_state"] != detector_state):
-                # Una observación PROTEGIDA no es un outcome — su propio
-                # `recovery_command_id` (casi siempre None) no debe pisar el
-                # enlace que YA sostiene la transición vigente: el outcome que
-                # llegue después lo busca en LA TRANSICIÓN ACTUAL
-                # (`t.recovery_command_id AS active_recovery_command`, más
-                # abajo en este mismo fichero), y una transición "protegida"
-                # que lo borra deja al outcome válido sin cómo cerrar
-                # (hallazgo codex, MARK:astra-guard-link-followup-20260908).
-                # Conservar el enlace vigente en vez del de ESTA observación.
-                enlace = (current["current_recovery_command"]
-                         if (protected_cycle or protected_recovery)
-                         and current is not None else recovery_command_id)
-                transition_id, receipt_id, _ = self._runtime_transition_locked(
-                    con, lane=view.lane, workload=workload,
-                    principal_id=view.principal_id, to_status=desired,
-                    detector_state=detector_state, cause_kind="observation",
-                    cause_id=observation_id, reason_code=reason_code,
-                    observation_id=observation_id,
-                    recovery_command_id=enlace, at=observed_at)
-            con.execute(
-                "UPDATE runtime_status SET last_observed_at=? WHERE lane=?"
-                " AND workload_id=?", (observed_at, view.lane, workload_id))
-            return RuntimeObservation(
-                observation_id, view.lane, workload_id, runtime_instance,
-                int(workload["credential_generation"]), supervisor_seq, desired,
-                transition_id, receipt_id, False, observed_at)
-
-    @_audita
-    def evaluate_runtime_deadlines(self, token: str, *, stale_after_s: int) -> int:
-        """Timeout produce ``stale`` y nunca ``stopped``; el reloj es servidor."""
-        self._guard_mutable()
-        if type(stale_after_s) is not int or isinstance(stale_after_s, bool) or not (
-                0 < stale_after_s <= 31 * 24 * 60 * 60):
-            raise OperationInvalid("stale_after_s fuera de rango")
-        now = self._clock()
-        at = _now_iso(now)
-        with self._tx() as con:
-            view = _authenticate_locked(con, token, now)
-            if view is None:
-                raise AuthError("sesión invalidada antes de evaluar deadlines")
-            self._exigir_capacidad_locked(
-                con, view, CAP_RUNTIME_OBSERVE, "runtime.observe")
-            candidates = con.execute(
-                "SELECT s.*,w.* FROM runtime_status s"
-                " JOIN expected_workloads w ON w.lane=s.lane"
-                "  AND w.organization_revision=s.organization_revision"
-                "  AND w.workload_id=s.workload_id"
-                " WHERE s.lane=? AND s.status IN ('fresh','degraded')"
-                " AND s.last_observed_at IS NOT NULL",
-                (view.lane,)).fetchall()
-            changed = 0
-            for row in candidates:
-                last = con.execute(
-                    "SELECT MAX(rowid) r FROM runtime_observations WHERE lane=?"
-                    " AND workload_id=? AND target_runtime_instance=?"
-                    " AND target_generation=?",
-                    (view.lane, row["workload_id"],
-                     row["runtime_instance"], row["credential_generation"])
-                ).fetchone()["r"]
-                observed = con.execute(
-                    "SELECT observed_at FROM runtime_observations WHERE rowid=?",
-                    (last,)).fetchone()["observed_at"]
-                observed_epoch = datetime.datetime.fromisoformat(
-                    observed.replace("Z", "+00:00")).timestamp()
-                if now - observed_epoch <= stale_after_s:
-                    continue
-                self._runtime_transition_locked(
-                    con, lane=view.lane, workload=row,
-                    principal_id=view.principal_id, to_status="stale",
-                    detector_state=row["detector_state"], cause_kind="deadline",
-                    cause_id=f"deadline:{row['status_seq']}",
-                    reason_code="DEADLINE_EXCEEDED", at=at)
-                changed += 1
-            return changed
-
-    def _revalidate_recovery_fence_locked(
-            self, con: sqlite3.Connection, recovery: sqlite3.Row) -> None:
-        """Revalida target, identidad solicitante y valla en la misma tx.
-
-        El worker que recibe/arranca el command no tiene por qué ser dueño del
-        lease. Por eso no se reutiliza `_fence_locked`, que compara contra la
-        sesión del llamante: se compara contra la identidad durable que creó la
-        recovery y se exige que tanto esa sesión como el lease sigan vigentes.
-        """
-        canonical = self._recurso(f"runtime/{recovery['workload_id']}")
-        if recovery["fenced_resource"] != canonical:
-            raise FencingConflict("recovery ligada a un recurso no canónico")
-        workload = self._active_workload_locked(
-            con, recovery["lane"], recovery["workload_id"])
-        if (workload is None
-                or int(workload["organization_revision"]) !=
-                   int(recovery["organization_revision"])
-                or workload["runtime_instance"] !=
-                   recovery["target_runtime_instance"]
-                or int(workload["credential_generation"]) !=
-                   int(recovery["target_generation"])):
-            raise RecoveryConflict("el target de recovery ya no es el activo")
-        now = self._clock()
-        requester = con.execute(
-            "SELECT 1 FROM runtime_sessions WHERE lane=? AND principal_id=?"
-            " AND runtime_instance=? AND generation=? AND revoked_at IS NULL"
-            " AND expires_at>?",
-            (recovery["lane"], recovery["requester_principal"],
-             recovery["requester_runtime"], recovery["requester_generation"],
-             now)).fetchone()
-        if requester is None:
-            raise FencingConflict("la identidad que adquirió la valla ya no está vigente")
-        lease = con.execute(
-            "SELECT * FROM leases WHERE lane=? AND resource=?",
-            (recovery["lane"], canonical)).fetchone()
-        if (lease is None or lease["released_at"] is not None
-                or lease["expires_at"] <= now
-                or lease["principal_id"] != recovery["requester_principal"]
-                or lease["runtime_instance"] != recovery["requester_runtime"]
-                or int(lease["fencing_token"]) != int(recovery["fencing_token"])):
-            raise FencingConflict("la valla de recovery ya no es la vigente")
-
-    def _advance_command_receipt_locked(
-            self, con: sqlite3.Connection, command_id: str,
-            new_state: str, at: str) -> str:
-        """Mueve command y receipt como una sola verdad, sin detalle libre."""
-        changed = con.execute(
-            "UPDATE commands SET state=? WHERE command_id=?",
-            (new_state, command_id)).rowcount
-        if changed != 1:
-            raise CommandTransitionInvalid(f"`{command_id}` no existe")
-        receipt = con.execute(
-            "SELECT receipt_id FROM receipts WHERE subject_kind='command'"
-            " AND subject_id=?", (command_id,)).fetchone()
-        if receipt is None:
-            raise CommandTransitionInvalid(f"`{command_id}` sin recibo")
-        seq = con.execute(
-            "SELECT COALESCE(MAX(seq),0) s FROM receipt_transitions"
-            " WHERE receipt_id=?", (receipt["receipt_id"],)).fetchone()["s"]
-        transition_id = _new_id("trn")
-        con.execute(
-            "INSERT INTO receipt_transitions(transition_id,receipt_id,seq,state,"
-            "at,detail) VALUES(?,?,?,?,?,NULL)",
-            (transition_id, receipt["receipt_id"], int(seq) + 1, new_state, at))
-        con.execute(
-            "UPDATE receipts SET current_state=?,updated_at=? WHERE receipt_id=?",
-            (new_state, at, receipt["receipt_id"]))
-        return transition_id
-
-    @_audita
-    def request_runtime_recovery(
-            self, token: str, *, workload_id: str, runtime_instance: str,
-            idempotency_key: str, reason_code: str,
-            action_code: str, fenced_resource: str,
-            fencing_token: int) -> RuntimeRecovery:
-        """Liga una recovery idempotente a un command y a su fencing exacto."""
-        self._guard_mutable()
-        workload_id = _control_id(workload_id, "workload_id")
-        runtime_instance = _control_id(runtime_instance, "runtime_instance")
-        idempotency_key = _control_id(idempotency_key, "idempotency_key")
-        if reason_code not in RECOVERY_REASON_CODES:
-            raise OperationInvalid("reason_code de recovery fuera del vocabulario")
-        if action_code not in RECOVERY_ACTION_CODES:
-            raise OperationInvalid("action_code de recovery fuera del vocabulario")
-        if type(fencing_token) is not int or isinstance(fencing_token, bool) or fencing_token <= 0:
-            raise RecoveryConflict("fencing_token debe ser entero positivo")
-        fenced_resource = self._recurso(fenced_resource)
-        request = {"workload_id": workload_id, "runtime_instance": runtime_instance,
-                   "reason_code": reason_code, "action_code": action_code,
-                   "fenced_resource": fenced_resource,
-                   "fencing_token": fencing_token}
-        req_hash = _sha256(_canonical(request))
-        at = _now_iso(self._clock())
-        self._tras_precheck()
-        with self._tx() as con:
-            view = _authenticate_locked(con, token, self._clock())
-            if view is None:
-                raise AuthError("sesión invalidada antes de recovery")
-            self._exigir_capacidad_locked(
-                con, view, CAP_RUNTIME_RECOVER, "runtime.recover")
-            previous = con.execute(
-                "SELECT * FROM runtime_recoveries WHERE requester_principal=?"
-                " AND lane=? AND verb='runtime.recover' AND idempotency_key=?",
-                (view.principal_id, view.lane, idempotency_key)).fetchone()
-            if previous is not None:
-                if not hmac.compare_digest(previous["req_hash"], req_hash):
-                    raise IdempotencyConflict("misma clave de recovery con cuerpo distinto")
-                transitions = con.execute(
-                    "SELECT transition_id,receipt_id FROM runtime_status_transitions"
-                    " WHERE recovery_command_id=? AND cause_kind='recovery'"
-                    " AND to_status='recovering' ORDER BY status_seq,transition_id",
-                    (previous["command_id"],)).fetchall()
-                if len(transitions) != 1:
-                    raise RecoveryConflict(
-                        "recovery idempotente sin una aceptación durable inequívoca")
-                transition = transitions[0]
-                return RuntimeRecovery(
-                    previous["recovery_id"], previous["command_id"], view.lane,
-                    previous["workload_id"], previous["target_runtime_instance"],
-                    int(previous["target_generation"]), transition["transition_id"],
-                    transition["receipt_id"], True, previous["accepted_at"])
-            workload = self._active_workload_locked(con, view.lane, workload_id)
-            if (workload is None or workload["runtime_instance"] != runtime_instance
-                    or workload["credential_generation"] is None):
-                raise SubjectNotFound("runtime target no existe en este carril")
-            canonical_resource = self._recurso(f"runtime/{workload_id}")
-            if fenced_resource != canonical_resource:
-                raise RecoveryConflict(
-                    "fenced_resource debe identificar exactamente el workload target")
-            self._fence_locked(con, view, fenced_resource, fencing_token)
-            active = con.execute(
-                "SELECT r.command_id FROM runtime_recoveries r JOIN commands c"
-                " ON c.command_id=r.command_id WHERE r.lane=? AND r.workload_id=?"
-                " AND r.target_generation=? AND c.state IN "
-                "('accepted','received','executing') LIMIT 1",
-                (view.lane, workload_id,
-                 workload["credential_generation"])).fetchone()
-            if active is not None:
-                raise RecoveryConflict(
-                    "la generación target ya tiene una recovery activa")
-            workstream = f"runtime-recovery/{workload_id}"
-            top = con.execute(
-                "SELECT COALESCE(MAX(revision),0) r FROM commands WHERE lane=?"
-                " AND workstream_id=?", (view.lane, workstream)).fetchone()["r"]
-            revision = int(top) + 1
-            command_id = _new_id("cmd")
-            payload = _canonical({
-                "action_code": action_code, "reason_code": reason_code,
-                "workload_id": workload_id, "runtime_instance": runtime_instance,
-                "target_generation": workload["credential_generation"],
-                "fenced_resource": fenced_resource, "fencing_token": fencing_token,
-            })
-            con.execute(
-                "INSERT INTO commands(command_id,workstream_id,revision,lane,"
-                "principal_id,role,runtime_instance,attribution_status,payload,state,"
-                "supersedes,created_at) VALUES(?,?,?,?,?,?,?,'verified',?,'accepted',NULL,?)",
-                (command_id, workstream, revision, view.lane, view.principal_id,
-                 view.role, view.runtime_instance, payload, at))
-            self._open_receipt(
-                con, "command", command_id, view.principal_id, view.lane,
-                "accepted", at)
-            recovery_id = _new_id("rcv")
-            con.execute(
-                "INSERT INTO runtime_recoveries(recovery_id,lane,"
-                "organization_revision,workload_id,target_runtime_instance,"
-                "target_generation,requester_principal,requester_runtime,"
-                "requester_generation,verb,idempotency_key,req_hash,reason_code,"
-                "action_code,fenced_resource,fencing_token,command_id,accepted_at)"
-                " VALUES(?,?,?,?,?,?,?,?,?,'runtime.recover',?,?,?,?,?,?,?,?)",
-                (recovery_id, view.lane, workload["organization_revision"],
-                 workload_id, runtime_instance, workload["credential_generation"],
-                 view.principal_id, view.runtime_instance, view.generation,
-                 idempotency_key, req_hash, reason_code, action_code,
-                 fenced_resource, fencing_token, command_id, at))
-            transition_id, receipt_id, _ = self._runtime_transition_locked(
-                con, lane=view.lane, workload=workload,
-                principal_id=view.principal_id, to_status="recovering",
-                detector_state=None, cause_kind="recovery", cause_id=recovery_id,
-                reason_code="RECOVERY_REQUESTED", recovery_command_id=command_id, at=at)
-            return RuntimeRecovery(
-                recovery_id, command_id, view.lane, workload_id, runtime_instance,
-                int(workload["credential_generation"]), transition_id, receipt_id,
-                False, at)
-
-    @_audita
-    def advance_runtime_recovery(
-            self, token: str, command_id: str, new_state: str, *,
-            workload_id: str, runtime_instance: str) -> str:
-        """Única puerta no terminal para recovery: accepted→received→executing.
-
-        Outcome no entra aquí: lo firma una observación tipada y en esa misma
-        transacción terminaliza command+receipt+runtime_status+transition.
-
-        `workload_id`/`runtime_instance` ATAN el command al target declarado
-        por el llamante con la MISMA condición autoritativa que
-        ``record_runtime_observation`` ya exige para el outcome — target
-        activo de la revisión vigente (no uno viejo), y la transición ACTUAL
-        de `runtime_status` debe seguir apuntando a ESTE command_id como su
-        `recovery_command_id`. Sin esto, un carril con DOS recoveries en
-        vuelo (A y B) podía avanzar el command de A mientras el llamante
-        declaraba —y la acción externa actuaba sobre— el target B (hallazgo
-        codex/cto, MARK:astra-review-1725-20260908); comparar sólo dos
-        columnas de la fila histórica de `runtime_recoveries` tampoco cazaba
-        un target que cambió de revisión/generación entretanto ni un command
-        cuyo enlace ya no es el activo (MARK:astra-guard-link-followup-
-        20260908) — de ahí el mismo JOIN completo que usa el outcome, no una
-        versión más corta.
-        """
-        self._guard_mutable()
-        command_id = _control_id(command_id, "command_id")
-        workload_id = _control_id(workload_id, "workload_id")
-        runtime_instance = _control_id(runtime_instance, "runtime_instance")
-        if new_state not in {"received", "executing"}:
-            raise CommandTransitionInvalid(
-                "recovery sólo admite received/executing; outcome es tipado")
-        at = _now_iso(self._clock())
-        with self._tx() as con:
-            view = _authenticate_locked(con, token, self._clock())
-            if view is None:
-                raise AuthError("sesión invalidada antes de avanzar recovery")
-            self._exigir_capacidad_locked(
-                con, view, CAP_COMMAND_WORKER, "advance_runtime_recovery")
-            workload = self._active_workload_locked(con, view.lane, workload_id)
-            if workload is None or workload["runtime_instance"] != runtime_instance:
-                raise RecoveryConflict(
-                    "el target declarado no es el activo de este carril")
-            recovery = con.execute(
-                "SELECT r.*,c.state AS command_state,s.status AS runtime_state,"
-                " t.recovery_command_id AS active_recovery_command"
-                " FROM runtime_recoveries r JOIN commands c"
-                " ON c.command_id=r.command_id JOIN runtime_status s"
-                " ON s.lane=r.lane AND s.workload_id=r.workload_id"
-                " JOIN runtime_status_transitions t"
-                " ON t.transition_id=s.transition_id"
-                " WHERE r.lane=? AND r.workload_id=? AND r.organization_revision=?"
-                " AND r.target_runtime_instance=? AND r.target_generation=?"
-                " AND r.command_id=?",
-                (view.lane, workload_id, workload["organization_revision"],
-                 runtime_instance, workload["credential_generation"],
-                 command_id)).fetchone()
-            if (recovery is None or recovery["runtime_state"] != "recovering"
-                    or recovery["active_recovery_command"] != command_id):
-                raise RecoveryConflict(
-                    "el command no es la recovery en vuelo para el target "
-                    "declarado — binding workload/runtime/revisión no coincide")
-            expected = "accepted" if new_state == "received" else "received"
-            if recovery["command_state"] != expected:
-                raise CommandTransitionInvalid(
-                    f"recovery `{recovery['command_state']}` no admite `{new_state}`")
-            self._revalidate_recovery_fence_locked(con, recovery)
-            return self._advance_command_receipt_locked(
-                con, command_id, new_state, at)
-
-    def active_recovery(self, token: str, command_id: str) -> dict[str, Any]:
-        """Lectura autoritativa lane-scoped de una recovery: un SNAPSHOT del
-        binding command↔target↔acción, para que un ejecutor externo se
-        rechace a sí mismo rápido ANTES de invocar su efecto (contrato
-        propuesto por backend, MARK:astra-followup-1730-20260908 /
-        recuperacion_manual.py).
-
-        Un command ajeno o inexistente en este carril produce
-        ``SubjectNotFound`` — no hay oráculo de enumeración cross-lane
-        (ADR-002 Decisión 7). Existir en `runtime_recoveries` NO basta para
-        ser ejecutable: eso lo dice ``vigente``.
-
-        ``vigente`` es True SÓLO SI, LAS CUATRO: (1) el target ORIGINAL de
-        esta recovery (revisión, runtime, generación — congelados al
-        aceptar) sigue siendo el target ACTIVO del carril AHORA; (2)
-        `command_state` está en la ALLOWLIST `{accepted, received,
-        executing}` — no una denylist de `{succeeded, failed}`: el
-        esquema admite SIETE estados (`:1366-1367`), y `cancelled`/
-        `superseded` son tan terminales como los otros dos; excluir por
-        lista blanca deja cualquier estado futuro fuera por defecto, no
-        dentro por descuido — comprobado explícito, no inferido del
-        estado runtime aunque hoy ambos se actualizan en la misma
-        transacción; (3) el estado runtime AHORA es `recovering`; (4) la
-        transición vigente sigue enlazando a ESTE `command_id`.
-
-        ⚠️ **Lo que ``vigente`` NO comprueba — dicho explícito para que
-        nadie lo lea de más** (hallazgo codex, MARK:astra-observer-9a71b1b-
-        active-read-20260908, dos rondas): NO revalida la valla/lease
-        (`advance_runtime_recovery` sí lo hace, dentro de su propia
-        transacción, vía `_revalidate_recovery_fence_locked`) — esta
-        lectura no toca leases. NO concede permiso ni capacidad de
-        ejecutar nada: un `vigente=True` es un snapshot que puede quedar
-        obsoleto en el instante siguiente a esta llamada, no una
-        autorización. NO sustituye a `advance_runtime_recovery`/
-        `record_runtime_observation`, que siguen siendo quienes deciden
-        con autoridad, dentro de su propia transacción, en el momento del
-        avance real — esto es sólo un pre-vuelo de rechazo rápido.
-
-        ``runtime_state`` viaja `None` SÓLO en dos casos: el target se
-        sustituyó (nueva revisión organizativa) o no existe proyección de
-        `runtime_status` en absoluto para el workload. **NO es `None`
-        cuando la recovery es terminal con el target sin sustituir** — ahí
-        `runtime_state` lleva el valor real post-outcome (`fresh` tras
-        `recovery_succeeded`, `degraded` tras `recovery_failed`); es
-        `vigente` quien pasa a False, no `runtime_state` quien se vacía.
-        """
-        command_id = _control_id(command_id, "command_id")
-        with self._lectura() as (con, _):
-            view = _authenticate_locked(con, token, self._clock())
-            if view is None:
-                raise AuthError("se requiere sesión válida")
-            self._exigir_capacidad_locked(
-                con, view, CAP_COMMAND_WORKER, "runtime.recover")
-            recovery = con.execute(
-                "SELECT r.*,c.state AS command_state FROM runtime_recoveries r"
-                " JOIN commands c ON c.command_id=r.command_id"
-                " WHERE r.lane=? AND r.command_id=?",
-                (view.lane, command_id)).fetchone()
-            if recovery is None:
-                raise SubjectNotFound(
-                    "command no es una recovery de este carril")
-            workload = self._active_workload_locked(
-                con, view.lane, recovery["workload_id"])
-            vigente = False
-            runtime_state = None
-            if (workload is not None
-                    and workload["organization_revision"]
-                    == recovery["organization_revision"]
-                    and workload["runtime_instance"]
-                    == recovery["target_runtime_instance"]
-                    and workload["credential_generation"]
-                    == recovery["target_generation"]):
-                # El target ORIGINAL de esta recovery sigue siendo el activo
-                # — sin esto, leer el estado runtime actual le atribuiría a
-                # este command el destino de OTRO target que lo sustituyó.
-                estado = con.execute(
-                    "SELECT s.status,t.recovery_command_id"
-                    " AS active_recovery_command FROM runtime_status s"
-                    " JOIN runtime_status_transitions t USING (transition_id)"
-                    " WHERE s.lane=? AND s.workload_id=?",
-                    (view.lane, recovery["workload_id"])).fetchone()
-                if estado is not None:
-                    runtime_state = estado["status"]
-                    # ALLOWLIST, no denylist (hallazgo codex,
-                    # MARK:astra-observer-9a71b1b-active-read-20260908,
-                    # 3ª ronda): `commands.state` tiene SIETE valores
-                    # (`:1366-1367`), no dos — `cancelled`/`superseded` son
-                    # tan terminales como `succeeded`/`failed`, y un
-                    # `not in {"succeeded","failed"}` los habría dejado
-                    # pasar como si siguieran en curso. Fail-closed: sólo
-                    # los tres estados que SÍ progresan cuentan como
-                    # vigentes; cualquier estado nuevo que el esquema
-                    # admita mañana queda excluido por defecto, no incluido
-                    # por descuido.
-                    vigente = (recovery["command_state"] in
-                              {"accepted", "received", "executing"}
-                              and runtime_state == "recovering"
-                              and estado["active_recovery_command"] == command_id)
-            return {
-                "command_id": recovery["command_id"],
-                "workload_id": recovery["workload_id"],
-                "runtime_instance": recovery["target_runtime_instance"],
-                "target_generation": recovery["target_generation"],
-                "action_code": recovery["action_code"],
-                "fenced_resource": recovery["fenced_resource"],
-                "fencing_token": recovery["fencing_token"],
-                "state": recovery["command_state"],
-                "runtime_state": runtime_state,
-                "vigente": vigente,
-            }
-
-    def runtime_statuses(self, token: str) -> tuple[dict[str, Any], ...]:
-        """Vista lane-scoped del estado activo; cross-lane equivale a ausencia."""
-        with self._lectura() as (con, _):
-            view = _authenticate_locked(con, token, self._clock())
-            if view is None:
-                raise AuthError("se requiere sesión válida")
-            self._exigir_capacidad_locked(con, view, CAP_RUNTIME_READ, "runtime.read")
-            return tuple(dict(row) for row in con.execute(
-                "SELECT s.* FROM runtime_status s JOIN organization_revisions o"
-                " ON o.lane=s.lane AND o.revision=s.organization_revision"
-                " WHERE s.lane=? AND o.active=1 ORDER BY s.workload_id",
-                (view.lane,)))
-
-    def runtime_status(self, token: str, runtime_instance: str) -> dict[str, Any]:
-        runtime_instance = _control_id(runtime_instance, "runtime_instance")
-        with self._lectura() as (con, _):
-            view = _authenticate_locked(con, token, self._clock())
-            if view is None:
-                raise AuthError("se requiere sesión válida")
-            self._exigir_capacidad_locked(con, view, CAP_RUNTIME_READ, "runtime.read")
-            row = con.execute(
-                "SELECT s.* FROM runtime_status s JOIN organization_revisions o"
-                " ON o.lane=s.lane AND o.revision=s.organization_revision"
-                " WHERE s.lane=? AND s.runtime_instance=? AND o.active=1",
-                (view.lane, runtime_instance)).fetchone()
-            if row is None:
-                raise SubjectNotFound("runtime target no existe en este carril")
-            return dict(row)
-
-    def organization(self, token: str) -> dict[str, Any]:
-        """Snapshot autoritativo de una revisión; jamás mezcla `/organigrama`."""
-        with self._lectura() as (con, _):
-            view = _authenticate_locked(con, token, self._clock())
-            if view is None:
-                raise AuthError("se requiere sesión válida")
-            self._exigir_capacidad_locked(
-                con, view, CAP_ORGANIZATION_READ, "organization.read")
-            revision = con.execute(
-                "SELECT * FROM organization_revisions WHERE lane=? AND active=1",
-                (view.lane,)).fetchone()
-            if revision is None:
-                raise SubjectNotFound("no existe organización activa en este carril")
-            number = revision["revision"]
-            def rows(table: str):
-                return [dict(row) for row in con.execute(
-                    f"SELECT * FROM {table} WHERE lane=? AND revision=? ORDER BY rowid",
-                    (view.lane, number))]
-            workloads = [dict(row) for row in con.execute(
-                "SELECT * FROM expected_workloads WHERE lane=?"
-                " AND organization_revision=? ORDER BY workload_id",
-                (view.lane, number))]
-            return {
-                "authority": True, "revision": dict(revision),
-                "roles": rows("organization_roles"),
-                "reports": rows("organization_reports"),
-                "reviewers": rows("organization_reviewers"),
-                "escalations": rows("organization_escalations"),
-                "workloads": workloads,
-            }
 
     # ── leases y fencing ─────────────────────────────────────────────────────
     @_audita
@@ -9646,9 +7241,6 @@ class Journal:
         AdmissionConflict: "ADMISSION_CONFLICT",
         SchemaIndeterminate: "SCHEMA_INDETERMINATE",
         ReplayUnverifiable: "REPLAY_UNVERIFIABLE",
-        ObservationSequenceConflict: "OBSERVATION_SEQUENCE_CONFLICT",
-        OrganizationConflict: "ORGANIZATION_CONFLICT",
-        RecoveryConflict: "RECOVERY_CONFLICT",
     }
 
     def _auditar_rechazo(self, token: str, exc: Exception) -> str | None:
@@ -9702,20 +7294,20 @@ class Journal:
         se tragaría los errores de programación del propio auditor.
         """
         try:
-            with self._lectura() as (con, _):
-                row = con.execute(
-                    "SELECT s.runtime_instance, s.principal_id, p.principal, s.role, s.lane,"
-                    " s.expires_at, s.revoked_at, s.generation,"
-                    " COALESCE((SELECT b.principal_source FROM credential_bindings b"
-                    "            WHERE b.principal_id=s.principal_id"
-                    "            ORDER BY b.bound_at DESC LIMIT 1), '') principal_source,"
-                    " COALESCE((SELECT CAST(v AS INTEGER) FROM meta WHERE k='generation'), 1)"
-                    "   current_generation"
-                    " FROM runtime_sessions s JOIN principals p USING(principal_id)"
-                    " WHERE s.token_hash=?", (_sha256(token),)).fetchone()
-                return dict(row) if row else None
-        except (JournalNotInitialized, IdentityChanged):
+            con = self._connect()
+        except JournalNotInitialized:
             return None
+        row = con.execute(
+            "SELECT s.runtime_instance, s.principal_id, p.principal, s.role, s.lane,"
+            " s.expires_at, s.revoked_at, s.generation,"
+            " COALESCE((SELECT b.principal_source FROM credential_bindings b"
+            "            WHERE b.principal_id=s.principal_id"
+            "            ORDER BY b.bound_at DESC LIMIT 1), '') principal_source,"
+            " COALESCE((SELECT CAST(v AS INTEGER) FROM meta WHERE k='generation'), 1)"
+            "   current_generation"
+            " FROM runtime_sessions s JOIN principals p USING(principal_id)"
+            " WHERE s.token_hash=?", (_sha256(token),)).fetchone()
+        return dict(row) if row else None
 
     _CMD_MAQUINA = {
         "accepted":   {"received", "cancelled"},
@@ -9822,13 +7414,6 @@ class Journal:
             if row["lane"] != view.lane:
                 raise CommandTransitionInvalid(
                     "el comando es de otro carril")
-            recovery = con.execute(
-                "SELECT 1 FROM runtime_recoveries WHERE lane=? AND command_id=?",
-                (view.lane, command_id)).fetchone()
-            if recovery is not None:
-                raise CommandTransitionInvalid(
-                    "una recovery sólo avanza por advance_runtime_recovery y "
-                    "terminaliza mediante outcome tipado")
             permitidos = self._CMD_MAQUINA.get(row["state"], set())
             if new_state not in permitidos:
                 raise CommandTransitionInvalid(

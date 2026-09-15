@@ -550,8 +550,8 @@ independently built.
 
 ## Contributing, security, protocol
 
-- [`CONTRIBUTING.md`](./CONTRIBUTING.md) — running it from source, signing your
-  commits (DCO), the hygiene gate, and the five house rules that are not negotiable.
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md) — running it from source, the CLA
+  requirements and pending signing workflow, the hygiene gate, and the house rules.
 - [`docs/GUARANTEES.md`](./docs/GUARANTEES.md) — the six guarantees, the status of
   each against this commit, the honest limits, and where the build/integrate border
   sits.

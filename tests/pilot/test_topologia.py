@@ -231,30 +231,31 @@ def test_el_gateway_no_se_reinicia_solo(compose):
     assert compose["services"]["gateway"]["restart"] == "no"
 
 
-def test_el_pilot_no_toca_el_compose_de_la_flota():
-    """Un lote de manifests piloto no puede tocar el despliegue de la flota.
+def _mezclas_de_piloto(raiz):
+    """Detecta cambios que mezclan piloto y flota, incluidos los pendientes.
 
-    La frontera se mide por ALCANCE DE COMMIT, no comparando ``HEAD`` con una
-    base histórica. Aquella comparación acumulaba todos los cambios legítimos de
-    integración en ``Dockerfile``/``docker-compose.yml`` y obligaba a enumerar
-    líneas permitidas para siempre. Aquí cada commit que toca un
-    ``docker-compose.pilot*.yml`` se inspecciona por separado. Los cambios de
-    runtime en otros commits no son asunto de este guarda; mezclar ambos mundos
-    en el mismo commit sí lo rompe. El worktree se trata como un commit pendiente
-    para conservar la protección antes del commit.
+    Un commit sin padres es el snapshot inicial, no un cambio de despliegue.
+    Se exige historia completa para no confundir un límite shallow con una raíz.
     """
     import subprocess
 
     def git(*a):
-        return subprocess.run(["git", "-C", str(RAIZ), *a], capture_output=True,
+        return subprocess.run(["git", "-C", str(raiz), *a], capture_output=True,
                               text=True)
 
+    shallow = git("rev-parse", "--is-shallow-repository")
+    assert shallow.returncode == 0, shallow.stderr
+    assert shallow.stdout.strip() == "false", "el gate exige historia completa"
     prohibidos = {"Dockerfile", "docker-compose.yml"}
-    log = git("log", "--format=%H", "--", "docker-compose.pilot*.yml")
+    log = git("log", "--full-history", "--format=%H", "--", "docker-compose.pilot*.yml")
     assert log.returncode == 0, f"git log falló: {log.stderr!r}"
     lotes: list[tuple[str, set[str]]] = []
     for commit in log.stdout.splitlines():
-        shown = git("diff-tree", "--root", "-m", "--no-commit-id",
+        padres = git("show", "-s", "--format=%P", commit)
+        assert padres.returncode == 0, padres.stderr
+        if not padres.stdout.strip():
+            continue
+        shown = git("diff-tree", "-m", "--no-commit-id",
                     "--name-only", "-r", commit)
         assert shown.returncode == 0, (
             f"git diff-tree {commit[:8]} falló: {shown.stderr!r}")
@@ -268,20 +269,69 @@ def test_el_pilot_no_toca_el_compose_de_la_flota():
            for p in pendientes):
         lotes.append(("WORKTREE", pendientes))
 
-    def mezclados(candidatos):
-        return {
-            lote: sorted(prohibidos & ficheros)
-            for lote, ficheros in candidatos
-            if prohibidos & ficheros
-        }
+    return {lote: sorted(prohibidos & ficheros)
+            for lote, ficheros in lotes if prohibidos & ficheros}
 
-    assert mezclados([("MUTANTE", {
-        "docker-compose.pilot-mutante.yml", "Dockerfile",
-    })]) == {"MUTANTE": ["Dockerfile"]}
-    mezclas = mezclados(lotes)
+
+def test_el_pilot_no_toca_el_compose_de_la_flota():
+    mezclas = _mezclas_de_piloto(RAIZ)
     assert mezclas == {}, (
         "un mismo lote mezcla manifests piloto con despliegue global: "
         f"{mezclas}")
+
+
+@pytest.fixture
+def historia_piloto(tmp_path):
+    """Historia sintética con snapshot inicial completo, sin ancestros privados."""
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", str(repo), *args], check=True,
+            capture_output=True, text=True).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.name", "Pilot fixture")
+    git("config", "user.email", "pilot@example.invalid")
+    for name in ("Dockerfile", "docker-compose.yml", "docker-compose.pilot.yml"):
+        (repo / name).write_text("initial\n")
+    git("add", ".")
+    git("-c", "commit.gpgsign=false", "commit", "-qm", "Initial snapshot")
+    return repo, git
+
+
+def test_SEC_el_test_de_la_flota_mide_lotes_sin_base_historica(historia_piloto):
+    """Una historia local nueva acepta cambios separados y rechaza mezclarlos."""
+    repo, git = historia_piloto
+    assert _mezclas_de_piloto(repo) == {}
+    # Los cambios separados son válidos, aunque existan ambos en la historia.
+    for name in ("docker-compose.pilot.yml", "Dockerfile"):
+        (repo / name).write_text("separate change\n")
+        git("add", name)
+        git("-c", "commit.gpgsign=false", "commit", "-qm", "Separate change")
+        assert _mezclas_de_piloto(repo) == {}
+
+    (repo / "docker-compose.pilot.yml").write_text("mixed change\n")
+    (repo / "docker-compose.yml").write_text("mixed change\n")
+    assert _mezclas_de_piloto(repo) == {"WORKTREE": ["docker-compose.yml"]}
+    git("add", ".")
+    git("-c", "commit.gpgsign=false", "commit", "-qm", "Mixed change")
+    assert _mezclas_de_piloto(repo) == {
+        git("rev-parse", "--short=12", "HEAD"): ["docker-compose.yml"]}
+
+
+def test_el_limite_shallow_no_se_confunde_con_snapshot_inicial(historia_piloto, tmp_path):
+    repo, git = historia_piloto
+    (repo / "docker-compose.pilot.yml").write_text("changed\n")
+    git("add", ".")
+    git("-c", "commit.gpgsign=false", "commit", "-qm", "Later change")
+    shallow = tmp_path / "shallow"
+    git("clone", "-q", "--depth=1", repo.as_uri(), str(shallow))
+    with pytest.raises(AssertionError, match="historia completa"):
+        _mezclas_de_piloto(shallow)
 
 def test_el_separador_de_montajes_no_se_rompe_dentro_de_una_variable():
     """REGRESIÓN, y la cazó el control positivo de este mismo fichero.
@@ -483,15 +533,22 @@ def test_SDET_7_la_cabecera_del_compose_no_cita_ficheros_que_no_existen():
     assert not rotas, f"el compose cita ficheros que no existen: {rotas}"
 
 
-def test_SDET_3_el_test_de_no_tocar_la_flota_MIRA_el_returncode():
+def test_SDET_3_el_test_de_no_tocar_la_flota_MIRA_el_returncode(monkeypatch, historia_piloto):
     """③ de @sdet. Si `git` fallara —binario ausente, repo roto—, `stdout` sale
     vacío y la aserción «no tocaste nada» pasa **por el fallo**. Un test que sólo
     mira stdout no distingue «no hay diferencias» de «no pude preguntar»."""
-    fuente = (RAIZ / "tests" / "pilot" / "test_topologia.py").read_text(encoding="utf-8")
-    bloque = fuente[fuente.index("def test_el_pilot_no_toca_el_compose_de_la_flota"):]
-    bloque = bloque[:bloque.index("\ndef ") if "\ndef " in bloque else len(bloque)]
-    assert "check=True" in bloque or "returncode" in bloque, (
-        "el subprocess del test de flota no comprueba su propio rc")
+    import subprocess
+    repo, _git = historia_piloto
+    run = subprocess.run
+
+    def falla_log(args, **kwargs):
+        if args[:4] == ["git", "-C", str(repo), "log"]:
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="git fixture error")
+        return run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", falla_log)
+    with pytest.raises(AssertionError, match="git log falló"):
+        _mezclas_de_piloto(repo)
 
 
 @pytest.mark.parametrize("knob", ["LLMINBOX_JOURNAL_VOLUME_ID",
@@ -618,17 +675,6 @@ def test_SEC_el_job_que_corre_tests_pilot_tiene_historia_SUFICIENTE():
         assert str(prof) == "0", (
             f"checkout sin `fetch-depth: 0` (vale {prof!r}): shallow por defecto, y "
             f"el test de la flota pide historia")
-
-
-def test_SEC_el_test_de_la_flota_mide_lotes_sin_base_historica():
-    """El guarda recorre commits alcanzables y el worktree, sin depender de una
-    rama remota, merge-base o SHA que pueda desaparecer en otro clon."""
-    fuente = (RAIZ / "tests" / "pilot" / "test_topologia.py").read_text(encoding="utf-8")
-    bloque = fuente[fuente.index("def test_el_pilot_no_toca_el_compose_de_la_flota"):]
-    bloque = bloque[:bloque.index("\ndef ") if "\ndef " in bloque else len(bloque)]
-    assert 'git("log"' in bloque and 'git("diff-tree"' in bloque
-    assert "WORKTREE" in bloque
-    assert "merge-base" not in bloque and "cat-file" not in bloque
 
 
 # ══════════════════════════════════════════════════════════════════════════════

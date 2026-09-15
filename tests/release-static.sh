@@ -21,7 +21,8 @@ package = __import__("json").loads((root / "web/package.json").read_text(encodin
 assert package["packageManager"] == "pnpm@10.33.2"
 
 dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
-froms = re.findall(r"^FROM\s+(\S+)", dockerfile, re.M)
+stage_images = re.findall(r"^FROM\s+(\S+)", dockerfile, re.M)
+froms = list(dict.fromkeys(stage_images))
 assert len(froms) == 2, f"expected two base images, found {froms}"
 bad = [image for image in froms if not re.fullmatch(r"[^@]+@sha256:[0-9a-f]{64}", image)]
 assert not bad, f"base images not pinned by digest: {bad}"
@@ -66,6 +67,11 @@ spec = importlib.util.spec_from_file_location("release_provenance", provenance_p
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 materials = module.dockerfile_base_materials(root / "Dockerfile")
+gate_spec = importlib.util.spec_from_file_location("artefacto_gate", root / "tools/artefacto-gate.py")
+gate = importlib.util.module_from_spec(gate_spec)
+gate_spec.loader.exec_module(gate)
+assert gate.materiales_dockerfile(root / "Dockerfile") == {
+    item["uri"]: item["digest"]["sha256"] for item in materials}
 assert len(materials) == len(froms)
 for image, material in zip(froms, materials):
     reference, digest = image.rsplit("@sha256:", 1)
@@ -74,6 +80,31 @@ for image, material in zip(froms, materials):
     expected_uri = (f"pkg:docker/{reference[:colon]}@{reference[colon + 1:]}"
                     if colon > slash else f"pkg:docker/{reference}")
     assert material["uri"] == expected_uri
+
+# Reusing the same pinned base in another stage adds no new material; using
+# the same image reference with another digest must remain an error.
+import tempfile
+with tempfile.TemporaryDirectory() as scratch:
+    fixture = pathlib.Path(scratch) / "Dockerfile"
+    fixture.write_text(f"FROM {froms[0]} AS first\nFROM {froms[0]}\n")
+    assert module.dockerfile_base_materials(fixture) == [materials[0]]
+    assert gate.materiales_dockerfile(fixture) == {
+        materials[0]["uri"]: materials[0]["digest"]["sha256"]}
+    reference, digest = froms[0].rsplit("@sha256:", 1)
+    other_digest = ("0" if digest[0] != "0" else "1") + digest[1:]
+    fixture.write_text(f"FROM {froms[0]} AS first\nFROM {reference}@sha256:{other_digest}\n")
+    try:
+        module.dockerfile_base_materials(fixture)
+    except SystemExit as exc:
+        assert "conflicting digests" in str(exc)
+    else:
+        raise AssertionError("different digests for one base reference were accepted")
+    try:
+        gate.materiales_dockerfile(fixture)
+    except ValueError as exc:
+        assert "conflicting digests" in str(exc)
+    else:
+        raise AssertionError("artifact verifier accepted conflicting base digests")
 print(f"static release chain: {len(uses)} Actions by SHA, {len(packages)} Python pins with hashes")
 PY
 

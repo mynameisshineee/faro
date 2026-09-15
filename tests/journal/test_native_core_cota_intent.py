@@ -209,7 +209,8 @@ def test_el_codigo_esta_en_el_VOCABULARIO_y_no_mueve_la_taxonomia():
     # deliberada, no un numero que sube).
     CICLO_DE_VIDA = {
         "IdentityChanged", "JournalNotInitialized", "JournalReadOnly", "LifecycleConflict",
-        "MigrationFailed", "MigrationSnapshotRequired", "PepperMismatch", "PreflightRejected",
+        "MigrationFailed", "MigrationSnapshotRequired", "OpenModeRestricted",
+        "PepperMismatch", "PreflightRejected",
         "PreflightUnstable", "SchemaCorrupt", "SchemaMismatch", "SchemaTooNew"}
     sin_motivo = {c.__name__ for c in clases if c not in C.Journal._POR_MOTIVO}
     assert sin_motivo == CICLO_DE_VIDA, (

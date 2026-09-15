@@ -126,11 +126,12 @@ def test_CENSO_todas_las_subclases_de_JournalError_heredan_el_saneado():
                  if isinstance(getattr(C, n), type)
                  and issubclass(getattr(C, n), C.JournalError)
                  and getattr(C, n) is not C.JournalError]
-    # 🔻 33 -> 35 al entrar `AdmissionClosed` y `AdmissionConflict` con la
-    # barrera de admision. DECIDIDO, no relajado: las dos heredan de
-    # `JournalError` y por tanto el saneado, que es lo que este censo mide.
-    assert len(subclases) == 35, (
-        f"la poblacion de subclases es {len(subclases)}, no 35. Si has anadido o "
+    # 35 -> 39: la migración añade MigrationSnapshotRequired; la flota añade
+    # ObservationSequenceConflict, OrganizationConflict y RecoveryConflict.
+    # G8 añade OpenModeRestricted como error de ciclo de vida. Las cinco
+    # heredan el saneado. El censo sigue siendo exacto.
+    assert len(subclases) == 40, (
+        f"la poblacion de subclases es {len(subclases)}, no 40. Si has anadido o "
         f"quitado una, DECIDE y actualiza este numero — un censo con un `>=` no "
         f"ve salir a nadie, y salir de la jerarquia es perder el saneado")
     for cls in subclases:
@@ -171,14 +172,17 @@ def test_CENSO_ningun_raise_del_fichero_queda_FUERA_de_la_jerarquia():
     ve = [n2 for n2 in ast.walk(ast.parse(src))
           if isinstance(n2, ast.Raise) and isinstance(n2.exc, ast.Call)
           and getattr(n2.exc.func, "id", None) == "ValueError"]
-    assert len(ve) == 3, f"hay {len(ve)} `raise ValueError`, no 3"
+    assert len(ve) == 5, f"hay {len(ve)} `raise ValueError`, no 5"
     saneados = [r for r in ve
                 if r.exc.args and isinstance(r.exc.args[0], ast.Call)
                 and getattr(r.exc.args[0].func, "id", None) == "_saneado"]
     assert len(saneados) == 2, (
         f"solo {len(saneados)} de los `raise ValueError` pasan por `_saneado`. "
-        f"El tercero es el del `pepper` en `__init__`, que NO lleva dato externo "
-        f"—es una constante mia— y por eso no entra")
+        f"Los otros tres son constantes: pepper, límites de latest y open_mode.")
+    constantes = [r for r in ve if r.exc.args
+                  and isinstance(r.exc.args[0], ast.Constant)
+                  and isinstance(r.exc.args[0].value, str)]
+    assert len(constantes) == 3, "un ValueError sin saneado debe ser texto constante"
     # ⚠️ MISMO DIENTE PARA `AssertionError`, y por un defecto MEDIDO, no por
     # simetria: la guarda del enum de `_rle` nacio como `raise AssertionError`
     # con f-string CRUDO y `campo` —un argumento— interpolado tal cual. El
@@ -457,8 +461,11 @@ def test_VE_la_clase_NO_ha_cambiado():
     # cablean. Cambiarlos obliga a venir aqui y DECIDIR, que es el punto.
     # 🔻 33 -> 35: `AdmissionClosed` + `AdmissionConflict`, ambas con su fila en
     # `REASON_CODES` y en `_POR_MOTIVO`, que es lo que D10/D11 exigen.
-    assert n == 35, f"la taxonomia se movio a {n}: D10/D11 dependen de ese numero"
-    assert len(C.Journal._POR_MOTIVO) == 24 and len(C.REASON_CODES) == 26
+    # MigrationSnapshotRequired y OpenModeRestricted son de ciclo de vida,
+    # sin motivo de rechazo de una operación autenticada.
+    # Los tres conflictos de flota añaden clase, motivo y código cada uno.
+    assert n == 40, f"la taxonomia se movio a {n}: revisa las familias declaradas"
+    assert len(C.Journal._POR_MOTIVO) == 27 and len(C.REASON_CODES) == 29
 
 
 def test_EQUIVALENCIA_DECLARADA_el_congelado_del_motivo_no_tiene_falsador_hoy():

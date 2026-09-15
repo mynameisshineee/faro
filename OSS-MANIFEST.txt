@@ -87,9 +87,13 @@ PROTOCOL.md
 RELEASE-CHECKLIST.md
 docs/GUARANTEES.md
 docs/ADR-001-NATIVE-AUTHORITY.md
+docs/ADR-002-FLEET-CONTROL-PLANE.md
 docs/ADR-003-MESSAGE-POLICY-MIGRATION.md
+docs/G8-ACTIVADOR-ORGANIZACION.md
 docs/V0.9-CERTIFICATION.md
 docs/V0.9-EXECUTION.md
+docs/V1.0-SCHEMA-V7-MIGRATION.md
+docs/SCHEMA-V7-RUNTIME-RECOVERY-CONTRACT.md
 docs/STATE-OF-THE-ART.md
 docs/SUPERVISOR-DRIVER.md
 docs/DESIGN-BRIEF.md
@@ -99,8 +103,11 @@ docker-compose.pilot.yml
 docker-compose.pilot-estreno.yml
 docker-compose.pilot-native.yml
 docker-compose.pilot-key-init.yml
+docker-compose.pilot-dual.yml
+docker-compose.pilot-dual-estreno.yml
 scripts/m4-pilot.sh
 docs/PILOT-M1-TOPOLOGY.md
+docs/PILOT-V1-DUAL-LANE-TOPOLOGY.md
 scripts/m4-evidencia.sh
 scripts/m4-restore-helper.py
 scripts/m4-rollback.sh

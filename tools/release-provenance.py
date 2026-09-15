@@ -68,7 +68,7 @@ def dockerfile_base_materials(path: pathlib.Path) -> list[dict[str, object]]:
     if not images:
         raise SystemExit("Dockerfile has no FROM instructions")
     materials: list[dict[str, object]] = []
-    seen: set[str] = set()
+    seen: dict[str, str] = {}
     for image in images:
         if "$" in image:
             raise SystemExit(f"Dockerfile FROM is interpolated, not immutable: {image!r}")
@@ -83,8 +83,11 @@ def dockerfile_base_materials(path: pathlib.Path) -> list[dict[str, object]]:
             name, version = reference, None
         uri = f"pkg:docker/{name}" + (f"@{version}" if version else "")
         if uri in seen:
-            raise SystemExit(f"Dockerfile repeats base material {uri!r}")
-        seen.add(uri)
+            if seen[uri] != digest:
+                raise SystemExit(f"Dockerfile gives conflicting digests for base material {uri!r}")
+            # Notices and runtime stages can use the very same pinned image.
+            continue
+        seen[uri] = digest
         materials.append({"uri": uri, "digest": {"sha256": digest}})
     return materials
 

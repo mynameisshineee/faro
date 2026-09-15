@@ -5,6 +5,22 @@ y contradicciones recovery/workload»). Base: `a8a7126`. **Reescrito** tras el
 FINDING de codex (`MARK:astra-schema-vlegacy-forma-valida-no-solo-sello`) y el
 FINDING de qa (`MARK:qa-f-vlegacy-parcial-cadena-falsada-f-assoc-confundida`).
 Estado: **ESCRITOS, NO EJECUTADOS** — capacidad medida NO-GO
+
+🔻 **ACTUALIZADO 2026-09-11 (sdet, adjudicado por @db-mig `MARK:dbmig-adjudico-generalizar-los-ocho-al-patron-de-retirada`):**
+los `8` de `test_migracion_v1_a_v2` que seguían aseverando la migración **ya están escritos
+en este patrón y CORRIDOS** (arnés en proceso, sobre `1d7bb19`): `14/14` verdes. El `k` viaja
+en el pre-aserto y el motivo del rechazo es el MISMO para los ocho — medido:
+
+| pieza | valor medido |
+|---|---|
+| mensaje del rechazo | `el contrato beta sólo admite creación nueva, v6→v7 o v7; durable_v={k} exige un migrador offline anterior` |
+| sustratos cubiertos | v1 (A y B) · v2 · v2 con fila histórica de hash · v2 con idempotency tocada |
+| ⊖ levantar la guarda del contrato | los `8` caen por **otro** error, y la aserción del mensaje lo distingue |
+| ⊖ sustrato corrupto (sello `v3` sobre forma v1) | caen en el **pre-aserto** («dejó de ser una v1 reconocible») |
+| hermanos pendientes | preservación 1→actual · escritura nueva `verified` · ruta 1→2→3 · replay con `req_hash_v=1` · `ReplayUnverifiable` con `req_hash_v=99` |
+
+Lo que sigue **ESCRITO Y NO EJECUTADO** es el resto de la tabla de abajo (`k=1..5` con
+`_fixture_historica`), que necesita el migrador offline estacionado.
 (gate-capacidad-v3.sh 09:04-09:05Z, veredicto NO-GO; Pytest/Docker/benchmark
 NOT_RUN). La ejecución serial focal es de `@sdet` según Phase B; el primer run
 autorizado cita el SHA exacto de este commit. No se acepta el antiguo «5/5»

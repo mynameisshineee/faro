@@ -16,7 +16,7 @@ desplegado en esta entrega.
 | Compose del piloto | `docker-compose.pilot.yml` | dos servicios (`gateway`, `agente`), volúmenes separados para journal, índice y secretos, un solo ledger RW |
 | Guarda de arranque | `tools/pilot_preflight.py` | ⓐ volumen durable · ⓑ testigo de identidad · pepper por fichero · mapa atestado con capacidades · un ledger RW |
 | Verificador estático | `tools/pilot_topologia.py` | las nueve invariantes del compose, como función pura sobre el dict |
-| Arnés | `tests/pilot/` | `342` pruebas — el control positivo y **un mutante por invariante**, más activación, preflight del projector e inicialización segura de secretos |
+| Arnés | `tests/pilot/` | `385` pruebas: `358` de M1 y `27` del falsador de dos lanes de V1.0 (`test_topologia_dual.py`); la CI contrasta este censo con los casos recogidos |
 
 ## Las dos comprobaciones que son un `AND`
 

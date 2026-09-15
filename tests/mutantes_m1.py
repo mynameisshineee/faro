@@ -165,12 +165,12 @@ MANIFIESTO = [
         "porque": "comprobar DESPUÉS de abrir ya creó el `-shm` sobre el "
                   "fichero de otro y dejó un handle vivo apuntándolo. El "
                   "veredicto correcto llega tarde: el rastro ya está escrito.",
-        "ancla": "            self._verificar_identidad()\n            con = None",
-        "rota":  "            con = None",
+        "ancla": "        self._verificar_identidad_operacional(con)\n"
+                 "        if con is not None:",
+        "rota":  "        pass\n"
+                 "        if con is not None:",
         "mata": ["tests/journal/test_preflight_m1_6.py::"
-                 "test_09_un_reemplazo_del_MISMO_tamano_y_otro_inode_se_caza",
-                 "tests/journal/test_preflight_m1_6.py::"
-                 "test_11_dos_hilos_y_un_reemplazo_en_medio"],
+                 "test_09_un_reemplazo_del_MISMO_tamano_y_otro_inode_se_caza"],
     },
     {
         "id": "M09",
@@ -198,12 +198,10 @@ MANIFIESTO = [
         "ancla": "            with self._inspeccion() as con:\n"
                  "                self._pepper_de(con)\n"
                  "                fila = con.execute(\"SELECT v FROM meta WHERE k='durable_v'\").fetchone()\n"
-                 "                existing = int(fila[\"v\"]) if fila else None\n"
-                 "            # ③ Y AHORA sí se sondea",
+                 "                existing = int(fila[\"v\"]) if fila else None",
         "rota":  "            with self._inspeccion() as con:\n"
                  "                fila = con.execute(\"SELECT v FROM meta WHERE k='durable_v'\").fetchone()\n"
-                 "                existing = int(fila[\"v\"]) if fila else None\n"
-                 "            # ③ Y AHORA sí se sondea",
+                 "                existing = int(fila[\"v\"]) if fila else None",
         "mata": ["tests/journal/test_correctivos_m1_8.py::"
                  "test_un_pepper_INCORRECTO_no_toca_ni_un_byte_ni_crea_sidecars"],
     },

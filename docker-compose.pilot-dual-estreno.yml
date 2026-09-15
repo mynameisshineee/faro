@@ -1,0 +1,81 @@
+# ESTRENO de las CUATRO huellas (journal + ledger, por lane) — fichero aparte,
+# mismo huevo-y-gallina que `docker-compose.pilot-estreno.yml`: el gateway de
+# cada lane exige sus dos huellas con `:?`, y esas huellas sólo existen
+# después de estrenarlas.
+#
+# Mismo `name:` que `docker-compose.pilot-dual.yml` A PROPÓSITO: así los
+# volúmenes son LOS MISMOS por lane y no un juego paralelo
+# (`llminbox-pilot-dual_llminbox-pilot-dual-a-journal`, etc.).
+#
+# ── X7 · RECUPERACIÓN ────────────────────────────────────────────────────────
+# El estreno es la única operación de este compose que ESCRIBE identidad en un
+# volumen — el análogo, a nivel de despliegue, de una recuperación: repara o
+# certifica el almacén durable de una lane. `estreno_a` sólo declara volúmenes
+# de la lane A; `estreno_b`, sólo de la B. Si alguna vez montara el volumen o
+# el host de la OTRA lane, una recuperación pedida para A podría certificar o
+# sobrescribir el testigo de B — el cruce que G9 nombra para «recovery».
+#
+# Lo que este fichero NO decide: la recuperación de un WORKLOAD (G7 —
+# «stale/stopped/recovering» con recibo por transición) vive en el supervisor
+# nativo, que es de otro flujo de trabajo (`/private/tmp/llminbox-v10-supervisor`,
+# Backend). Aquí sólo se prueba que la ÚNICA superficie de escritura de
+# identidad que este compose posee está confinada a su lane.
+#
+#   docker compose -f docker-compose.pilot-dual-estreno.yml run --rm estreno_a
+#   docker compose -f docker-compose.pilot-dual-estreno.yml run --rm estreno_b
+#
+# Idempotente por lane, igual que M1: con los testigos ya puestos no escribe y
+# devuelve las mismas huellas.
+
+name: llminbox-pilot-dual
+
+services:
+  estreno_a:
+    build: .
+    restart: "no"
+    entrypoint: ["python3", "/app/tools/pilot_preflight.py", "--init"]
+    environment:
+      LLMINBOX_JOURNAL: /journal/coordination.sqlite
+      LLMINBOX_JOURNAL_VOLUME_ID: "${LLMINBOX_DUAL_LANE_A_JOURNAL_VOLUME_ID:?genera uno con `python3 tools/pilot_preflight.py --genera-id`}"
+      LLMINBOX_LEDGER_PILOTO: /ledgers/llminbox
+      LLMINBOX_LEDGER_PILOTO_ID: "${LLMINBOX_DUAL_LANE_A_LEDGER_ID:?identidad del ledger de la lane A}"
+    volumes:
+      # SÓLO lo que hay que estrenar de la lane A. Ni mapa, ni pepper, ni el
+      # ledger testigo, ni un solo recurso de la lane B.
+      - llminbox-pilot-dual-a-journal:/journal
+      - "${LLMINBOX_DUAL_LANE_A_LEDGER_HOST:?directorio del ledger de la lane A}:/ledgers/llminbox"
+      - ./tools:/app/tools:ro
+    networks: [red_a]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    user: "1000:1000"
+
+  estreno_b:
+    build: .
+    restart: "no"
+    entrypoint: ["python3", "/app/tools/pilot_preflight.py", "--init"]
+    environment:
+      LLMINBOX_JOURNAL: /journal/coordination.sqlite
+      LLMINBOX_JOURNAL_VOLUME_ID: "${LLMINBOX_DUAL_LANE_B_JOURNAL_VOLUME_ID:?genera uno con `python3 tools/pilot_preflight.py --genera-id`}"
+      LLMINBOX_LEDGER_PILOTO: /ledgers/llminbox
+      LLMINBOX_LEDGER_PILOTO_ID: "${LLMINBOX_DUAL_LANE_B_LEDGER_ID:?identidad del ledger de la lane B}"
+    volumes:
+      - llminbox-pilot-dual-b-journal:/journal
+      - "${LLMINBOX_DUAL_LANE_B_LEDGER_HOST:?directorio del ledger de la lane B}:/ledgers/llminbox"
+      - ./tools:/app/tools:ro
+    networks: [red_b]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    user: "1000:1000"
+
+networks:
+  red_a: {}
+  red_b: {}
+
+volumes:
+  llminbox-pilot-dual-a-journal:
+  llminbox-pilot-dual-b-journal:

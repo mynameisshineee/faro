@@ -19,6 +19,14 @@ El modo se elige expresamente mediante --modo-ancla git|oci:
   el ARCHIVO OCI, no un manifiesto que pueda utilizarse para pull. Recuperar
   ese archivo y ejecutar el extremo dentro de la imagen son pruebas separadas.
 
+* arbol corre sobre el fixture ORDINARIO bench/ancla-v09 de este árbol: los
+  bytes certificados del ancla fletados POR CONTENIDO, sin historia git.
+  La identidad se mide superficie a superficie contra hashes FIJADOS en este
+  módulo (trazables al SHA certificado); el manifest vecino del fixture debe
+  coincidir con ellos, pero la autoridad es el código — un fichero modificable
+  por sí solo no prueba procedencia. git y oci quedan intactos para
+  instalaciones que sí tienen la historia del ancla.
+
 La limpieza se limita al temporal de esta corrida; no poda registros de otros
 worktrees. Si Git rechaza retirarlo, se conserva para inspección y se informa
 por stderr y en el reporte, sin cambiar el resultado del ciclo de migración.
@@ -47,7 +55,7 @@ RAZON_ROLLBACK = "DRAIN_FOR_ROLLBACK"
 
 # El modo del ancla se DECLARA — nunca se infiere de si la ruta existe: un
 # typo no puede cambiar de modo en silencio.
-MODO_ANCLA = ("git", "oci")
+MODO_ANCLA = ("git", "oci", "arbol")
 # Cierre transitivo de imports del corredor sobre el ancla (medido en los
 # blobs del SHA): `_arnes` importa `coordination` y `ledger_parse`, ambos en
 # la RAÍZ del ancla y stdlib-only. La identidad del modo oci se mide SOBRE
@@ -57,6 +65,21 @@ SUPERFICIES_ANCLA = (
     "ledger_parse.py",
     "tests/journal/_arnes.py",
 )
+# Fixture del ancla para el modo arbol (ruta RELATIVA a la raíz del árbol) y
+# su identidad FIJADA: sha256 de cada superficie, medidos sobre los blobs del
+# SHA certificado al fletar el fixture. Esta constante —revisada en el
+# código— es la autoridad de la identidad en modo arbol; el manifest vecino
+# (bench/ancla-v09/MANIFEST.sha256) es copia trazable y DEBE coincidir, pero
+# un fichero modificable por sí solo no prueba procedencia.
+ANCLA_V09_RUTA = pathlib.Path("bench") / "ancla-v09"
+ANCLA_V09_SUPERFICIES_SHA256 = {
+    "coordination.py":
+        "89793c56232148bf531d707fd3375a324bcc5d6fd47e0c872bc6792c26d23870",
+    "ledger_parse.py":
+        "852d530f87c1c8e6b0593c91b39b94a8e08b5c9e2b8ce4747dfe09cd8e1dc929",
+    "tests/journal/_arnes.py":
+        "f7f12ece8fbe7f1b9372b174cb06729f73dc2661005c9df8905bee051da453cf",
+}
 
 
 class DemoNoEjecutable(Exception):
@@ -225,6 +248,55 @@ def _identidad_ancla_oci(raiz: pathlib.Path) -> dict:
                 f"({h_blob[:16]}…) — este directorio no es el ancla "
                 f"{RAIZ_ANCLA_SHA[:12]}")
         verificadas[superficie] = h_blob
+    return verificadas
+
+
+def _lee_manifest_ancla_v09(raiz: pathlib.Path) -> dict:
+    """Parsea el manifest del fixture (`<hash>  <ruta>`, formato sha256sum;
+    comentarios `#` y líneas vacías fuera). Sin manifest no hay fixture."""
+    ruta_manifest = raiz / "MANIFEST.sha256"
+    if not ruta_manifest.is_file():
+        raise DemoNoEjecutable(
+            f"el fixture del ancla no trae MANIFEST.sha256 ({raiz})")
+    manifest: dict = {}
+    for linea in ruta_manifest.read_text(encoding="utf-8").splitlines():
+        linea = linea.strip()
+        if not linea or linea.startswith("#"):
+            continue
+        hash_valor, _, ruta = linea.partition("  ")
+        manifest[ruta.strip()] = hash_valor.strip()
+    return manifest
+
+
+def _identidad_ancla_arbol(raiz: pathlib.Path) -> dict:
+    """Identidad del FIXTURE arbol: POR CONTENIDO, contra los hashes fijados
+    en este módulo — no contra el manifest vecino, que un editor de texto
+    puede mentir solo. Cada constante es el sha256 del blob certificado en
+    RAIZ_ANCLA_SHA, medido al fletar el fixture; el manifest DEBE coincidir
+    con las constantes, y discrepar de ellas es un fallo de preparación.
+
+    Esto identifica los archivos que se ejecutan en el host. No acredita la
+    historia git del ancla: esa acreditación es la de los modos git y oci,
+    que exigen el SHA en un repositorio."""
+    verificadas = {}
+    for superficie in SUPERFICIES_ANCLA:
+        fichero = raiz / superficie
+        if not fichero.is_file():
+            raise DemoNoEjecutable(
+                f"el fixture del ancla no trae {superficie}: no es un ancla "
+                f"0.9 operable ({raiz})")
+        h_local = _sha256_fichero(fichero)
+        esperado = ANCLA_V09_SUPERFICIES_SHA256[superficie]
+        if h_local != esperado:
+            raise DemoNoEjecutable(
+                f"IDENTIDAD DEL ANCLA NO VERIFICADA: {superficie} del fixture "
+                f"({h_local[:16]}…) NO es el hash fijado del ancla "
+                f"{RAIZ_ANCLA_SHA[:12]} ({esperado[:16]}…)")
+        verificadas[superficie] = h_local
+    if _lee_manifest_ancla_v09(raiz) != ANCLA_V09_SUPERFICIES_SHA256:
+        raise DemoNoEjecutable(
+            "el MANIFEST.sha256 del fixture NO coincide con los hashes "
+            "fijados en el código: la copia trazable del ancla está desviada")
     return verificadas
 
 
@@ -414,6 +486,13 @@ def ejecuta_demo(ruta_db, *, worktree_ancla=None, modo_ancla: str = "git",
             raise DemoNoEjecutable(
                 f"el checkout externo no existe ({raiz_ancla}): el modo oci "
                 f"no crea nada — se le pasa el directorio ya extraído")
+    elif modo_ancla == "arbol":
+        if worktree_ancla is not None:
+            raise DemoNoEjecutable(
+                "el modo arbol corre sobre el fixture bench/ancla-v09 de ESTE "
+                f"árbol ({_RAIZ / ANCLA_V09_RUTA}): no acepta "
+                "--worktree-ancla — nada se redirige en silencio")
+        raiz_ancla = _RAIZ / ANCLA_V09_RUTA
     elif worktree_ancla is None:
         temporal = pathlib.Path(tempfile.mkdtemp(prefix="llminbox-ancla-09-"))
         raiz_ancla = temporal / "ancla"
@@ -424,8 +503,10 @@ def ejecuta_demo(ruta_db, *, worktree_ancla=None, modo_ancla: str = "git",
         "ancla_oci_archivo_sha256": ANCLA_OCI_ARCHIVO_SHA256,
         "archivo_oci_verificado": False,
         "extremo_oci_ejecutado": False,
-        "ancla_ejecucion": "codigo_extraido_en_host" if modo_ancla == "oci"
-                           else "worktree_git_en_host",
+        "ancla_ejecucion": ("codigo_extraido_en_host" if modo_ancla == "oci"
+                            else "fixture_ancla_v09_en_host"
+                            if modo_ancla == "arbol"
+                            else "worktree_git_en_host"),
         "ancla_modo": modo_ancla,
         "carril": CARRIL,
     }
@@ -435,6 +516,8 @@ def ejecuta_demo(ruta_db, *, worktree_ancla=None, modo_ancla: str = "git",
             ancla_creada = True
             reporte["ancla_identidad"] = (
                 f"git worktree add --detach {RAIZ_ANCLA_SHA}")
+        elif modo_ancla == "arbol":
+            reporte["ancla_identidad"] = _identidad_ancla_arbol(raiz_ancla)
         else:
             reporte["ancla_identidad"] = _identidad_ancla_oci(raiz_ancla)
         reporte["worktree_ancla"] = str(raiz_ancla)
@@ -596,8 +679,10 @@ def main(argv=None) -> int:
     p.add_argument("--modo-ancla", choices=MODO_ANCLA, default="git",
                    help="git (defecto): descolga un worktree NUEVO en el SHA "
                         "certificado. oci: usa código EXISTENTE extraído y lo "
-                        "ejecuta en el host — el modo no se infiere de "
-                        "si la ruta existe")
+                        "ejecuta en el host. arbol: corre sobre el fixture "
+                        "bench/ancla-v09 de este árbol, verificado por "
+                        "contenido contra hashes fijados en el código — el "
+                        "modo no se infiere de si la ruta existe")
     p.add_argument("--conservar-ancla", action="store_true",
                    help="no limpiar el worktree temporal (inspección)")
     p.add_argument("--salida", default=None,
@@ -605,6 +690,9 @@ def main(argv=None) -> int:
     a = p.parse_args(argv)
     if a.modo_ancla == "oci" and not a.worktree_ancla:
         p.error("--modo-ancla oci exige --worktree-ancla (checkout ya extraído)")
+    if a.modo_ancla == "arbol" and a.worktree_ancla:
+        p.error("--modo-ancla arbol no acepta --worktree-ancla (corre sobre "
+                "el fixture bench/ancla-v09 de este árbol)")
     try:
         reporte = ejecuta_demo(
             a.db, worktree_ancla=a.worktree_ancla, modo_ancla=a.modo_ancla,

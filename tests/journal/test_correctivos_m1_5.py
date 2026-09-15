@@ -324,14 +324,18 @@ def test_un_desajuste_de_ROL_TAMBIEN_para_la_migracion(tmp_path):
     j = C.Journal(ruta, pepper=PEPPER, lane_ledgers=LANES, recipient_resolver=censo, grammar=GRAMATICA)
     with pytest.raises(C.MigrationFailed) as exc:
         j.initialize()
-    assert "`role`" in str(exc.value)
+    # El contrato beta rechaza cualquier v1 antes de inspeccionar sus campos;
+    # no debe prometer un diagnóstico de `role` que el migrador retirado ya no
+    # puede alcanzar.
+    assert "durable_v=1" in str(exc.value)
+    assert "migrador offline" in str(exc.value)
     assert j.stored_durable_v() == 1
     j.close()
 
 
 # ── DB v2 GENERADA POR EL BINARIO REAL ─────────────────────────────────────
 
-def test_una_v2_parida_por_bcd05c5_migra_y_conserva(tmp_path):
+def test_una_v2_parida_por_bcd05c5_rechaza_sin_tocar(tmp_path):
     """La única prueba que NO depende de mi reconstrucción del esquema v2.
 
     Se pide el `coordination.py` de aquel commit y se le hace CREAR la base. Si
@@ -373,18 +377,12 @@ def test_una_v2_parida_por_bcd05c5_migra_y_conserva(tmp_path):
 
     nueva = C.Journal(ruta, pepper=PEPPER, lane_ledgers={"llminbox": ["llminbox"]}, recipient_resolver=censo, grammar=GRAMATICA)
     assert nueva.stored_durable_v() == 2
-    assert nueva.initialize() == C.DURABLE_V
-    con = nueva._connect()
-    assert con.execute("SELECT COUNT(*) c FROM events").fetchone()["c"] == 1
-    assert con.execute("SELECT COUNT(*) c FROM commands").fetchone()["c"] == 1
-    assert con.execute("SELECT req_hash_v FROM idempotency").fetchone()[0] == 1
-    assert con.execute("PRAGMA foreign_key_check").fetchall() == []
-    # Y el reintento heredado hace replay: el evento se escribió SIN ledger.
-    s2 = nueva.open_session("cred-A", ttl_s=10 ** 6)
-    b = nueva.accept_event(s2.token, idempotency_key="k",
-                           intent={"type": "message", "verb": "inform", "kind": "FYI",
-                                   "to": ["be"], "head": "h", "body": "cuerpo"})
-    assert b.replayed is True and b.event_id == a.event_id
+    antes = _huella(ruta)
+    with pytest.raises(C.MigrationFailed) as exc:
+        nueva.initialize()
+    assert "durable_v=2" in str(exc.value)
+    assert "migrador offline" in str(exc.value)
+    assert _huella(ruta) == antes
     nueva.close()
 
 

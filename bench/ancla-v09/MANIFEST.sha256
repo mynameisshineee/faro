@@ -1,0 +1,12 @@
+# Ancla v0.9 por CONTENIDO — bench/ancla-v09
+# Origen: commit 767702559817759a36b0be4715af6e1a8ccf9f7b
+#         («docs(release): certify integrated v0.9 artifact» — la certificación
+#         de la v0.9 integrada; estos 3 ficheros son el cierre transitivo de
+#         imports del corredor, medida declarada en bench/demo_migracion_rollback.py).
+# Regla: los bytes son EXACTAMENTE los del ancla — sin redacciones ni retoques.
+# La AUTORIDAD de la identidad son los hashes fijados en el código
+# (bench/demo_migracion_rollback.py::ANCLA_V09_SUPERFICIES_SHA256); este
+# manifest es su copia trazable y DEBE coincidir con él.
+89793c56232148bf531d707fd3375a324bcc5d6fd47e0c872bc6792c26d23870  coordination.py
+852d530f87c1c8e6b0593c91b39b94a8e08b5c9e2b8ce4747dfe09cd8e1dc929  ledger_parse.py
+f7f12ece8fbe7f1b9372b174cb06729f73dc2661005c9df8905bee051da453cf  tests/journal/_arnes.py

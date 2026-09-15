@@ -75,9 +75,9 @@ case "$url" in
   */carriles) printf '%s' '{"pruebas":"pruebas"}'; exit "${FK_RC:-0}" ;;
 esac
 
-# El flujo `llmi inbox` hace GET y luego POST /leido. Poder sabotear SOLO el
-# segundo paso es imprescindible: con un único FK_HTTP, un 403 también tumbaba
-# el GET y el falsador nunca alcanzaba la rama cuyo rc quería medir.
+# `llmi inbox` sólo lee; `llmi ack` confirma explícitamente por /ack.
+# FK_LEIDO_HTTP conserva el nombre histórico y controla /ack y /leido por
+# separado del GET: un rechazo del ACK no debe tumbar la lectura del fixture.
 #
 # `llmi admission …` encadena CUATRO llamadas por comando de escritura (abrir sesión
 # efímera · whoami · GET estado previo · POST transition) y hasta CINCO con la revocación
@@ -86,7 +86,7 @@ esac
 # anulan cuando su override viene puesto (no vacío).
 http="${FK_HTTP:-200}"
 case "$url" in
-  */inbox/*/leido)                 [ -n "${FK_LEIDO_HTTP:-}" ]   && http="$FK_LEIDO_HTTP" ;;
+  */inbox/*/leido|*/inbox/*/ack)    [ -n "${FK_LEIDO_HTTP:-}" ]   && http="$FK_LEIDO_HTTP" ;;
   */sessions)                      [ -n "${FK_OPEN_HTTP:-}" ]    && http="$FK_OPEN_HTTP" ;;
   */sessions/current)              [ -n "${FK_REVOKE_HTTP:-}" ]  && http="$FK_REVOKE_HTTP" ;;
   */whoami)                        [ -n "${FK_WHOAMI_HTTP:-}" ]  && http="$FK_WHOAMI_HTTP" ;;

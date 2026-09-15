@@ -33,9 +33,66 @@ python3 supervisor_driver.py \
 - `--fichero-sesion`: libro operativo 0600; jamás autoridad.
 
 Códigos de salida: `0` vueltas completadas sin fallos ni pendientes · `2`
-precondición (auth, organización, objetivo, token) · `3` sesión expirada a
-medio camino · `4` vueltas completadas con fallos acumulados, sensor
-indisponible u observaciones sin resolver.
+precondición (auth, organización, objetivo, token, parámetros) · `3` sesión
+expirada o sesión continua terminada sin poder renovar · `4` vueltas
+completadas con fallos acumulados, sensor indisponible u observaciones sin
+resolver (también en la parada por señal, si quedó algo en el aire).
+
+## Operación continua (--continuo)
+
+```sh
+python3 supervisor_driver.py \
+  --base-url http://127.0.0.1:8077 \
+  --token-file ~/.llminbox.session.token \
+  --objetivo rti-abc:4242 \
+  --continuo \
+  --fichero-sesion /var/lib/supervisor/sesion.json
+```
+
+La modalidad finita y sus códigos NO cambian; `--continuo` es una opción
+explícita encima:
+
+- **Vueltas sin tope**, con la memoria de ciclos y pendientes viva en el
+  proceso. `--vueltas` y `--continuo` son excluyentes (se rechaza con `2`).
+- **Renovación VALIDADA al acercarse el plazo** (`--refresco-margen-s`, 120 s
+  por defecto, que tiene que ser MENOR que `--ttl-s`; 30..3600, 900 por
+  defecto) por el contrato real del gateway: `POST
+  /native/v1/sessions/refresh` con el Bearer vigente. El gateway ROTA la
+  sesión (token nuevo, `runtime_instance` hijo nuevo, token previo revocado
+  en la misma transacción) pero el hijo CONSERVA principal, role, lane,
+  capacidades y `generation`: es renovación autenticada de la MISMA
+  autoridad. Eso se EXIGE, no se supone: el driver la adopta tras validar DOS
+  cosas —el recibo COMPLETO (token, rti, autoridad, conjunto exacto de
+  capacidades, generación CONSERVADA respecto del arranque y plazo parseado y
+  futuro), un `whoami` CON EL TOKEN HIJO que confirme rti, autoridad,
+  capacidades y el MISMO plazo, y `GET /runtimes/{rti}` con ese token que
+  confirme la generación durable —el `whoami` público no la expone—; sólo
+  entonces adopta
+  token/rti/plazo. Adoptar significa:
+  contextos y secuencias NUEVOS para el rti hijo (nonce nuevo; una secuencia
+  jamás se reutiliza con identidad distinta), conservando los vínculos
+  pid+arranque y el estado del sensor (no se pierden transiciones de
+  degradación ya vistas). No se exige nueva activación del organigrama por
+  token renovado. El token vive sólo en memoria.
+- **La transición jamás suelta nada en el aire**: sólo se renueva SIN
+  peticiones en vuelo; lo pendiente se reanuda con los mismos bytes y clave
+  bajo la sesión VIGENTE antes de rotar. Si no puede resolverse antes de
+  expirar: parada visible, código `3`, pendientes declarados en salida y
+  libro (`sesion_terminada_sin_refresco`), sin revocación anticipada ni
+  olvido. Si el recibo no se valida (campos, tipos, plazos), el plazo está
+  vencido o no cuadra recibo↔hijo, o el whoami del hijo falla o no confirma
+  la generación en el runtime declarado: `identidad_rotada` (el token previo
+  ya está revocado). Si la
+  autoridad del hijo es otra (principal/role/lane, capacidades o generación
+  distintos): `autoridad_incompatible`. Si
+  los contextos no se pueden reconstruir (un objetivo dejó de constar):
+  `contextos_irreconstruibles`. Todos con código `3`.
+- **Cierre ordenado ante SIGINT/SIGTERM**: la vuelta en curso termina, los
+  handlers previos se RESTAURAN al salir, el libro queda en
+  `parado_por_senal` y el código es `4` si quedaron fallos, sensor caído u
+  observaciones sin resolver; `0` si no.
+- Sigue sin descubrir pids, sin reiniciar agentes y sin ejecutar
+  recuperación: el modo continuo cambia CUÁNTO dura la mirada, no QUÉ hace.
 
 ## Garantías de ciclo de vida
 
@@ -70,16 +127,32 @@ inventa permisos ni un endpoint público incompatible con ADR-002.
 
 ## Límites declarados
 
-Una corrida finita es un **ensayo acotado**: no acredita supervisión continua
-ni recuperación de varios días. Para operación continua hace falta un
-lanzador externo que re-invoque el driver y una decisión (fuera de este parche)
-sobre quién re-registra los pids tras un reinicio.
+La modalidad finita sigue siendo un **ensayo acotado**. El modo continuo
+sostiene la mirada renovación tras renovación MIENTRAS la autoridad del
+observador no cambie (principal/role/lane): una autoridad distinta —o una
+renovación que no se pueda validar— termina la corrida visible con lo
+pendiente declarado. Re-registrar pids tras un reinicio sigue siendo de quien
+sabe que son suyos.
 
 ## Pruebas
 
 `tests/pytest/test_supervisor_driver.py` — composición con contexto atado,
 404→`activate_organization`, bootstrap sin `runtime_instance`, epoch+ISO en
 `expires_at`, expiración→3, pérdida persistente→4, retiro sin re-adopción,
-cero secretos en salida/sesión, contrato 0600 del token y límites de respuesta.
-Las pruebas usan un transporte y un reloj controlados y no requieren un
-gateway desplegado.
+cero secretos en salida/sesión, contrato 0600 del token y límites de
+respuesta; en continuo: dos renovaciones SIMULADAS seguidas (recibo y whoami
+del hijo guionizados, generación conservada) con observación posterior y
+secuencia nueva por identidad, recibo con OTRA generación→parada, recibo con
+capacidades distintas→parada, recibo con plazo vencido→parada, plazos
+recibo≠hijo→parada, runtime declarado del hijo sin generación coincidente→parada,
+sensor conservado entre renovaciones, pendiente resuelto antes de rotar
+(mismos bytes y clave bajo la sesión vigente), expiración con pendiente sin
+resolver→parada visible, autoridad incompatible→parada, whoami del hijo
+fallido→parada, señal→cierre ordenado con handlers restaurados (rc 4 con
+fallo previo), margen >= ttl rechazado, ttl fuera de contrato,
+`--continuo`+`--vueltas` excluyentes y techo de lectura del token EN BYTES.
+Las pruebas de este fichero usan un transporte y un reloj controlados y NO
+requieren un gateway desplegado: son SIMULACIÓN, y el paquete de aceptación
+contra el gateway REAL (dos refrescos reales que rotan, observación posterior
+en filas durables) vive en
+`tests/native_gateway/test_supervisor_driver_renovacion_real.py`.

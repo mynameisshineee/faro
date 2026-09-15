@@ -2,9 +2,14 @@
 
 This directory contains the exact 63 license texts collected for 41 npm packages
 and 19 pinned Python packages. `manifest.json` records the bytes, package versions,
-collection sources and five dependency input hashes. Texts are copied unchanged;
-the source collection and verification are recorded in
-`docs/evidence/2026-09-08-license-collection.json`.
+collection sources and five dependency input hashes. Texts are copied unchanged.
+The manifest preserves the digest of the original collection record; that
+operational record is not included in the public source snapshot.
+
+The input amendment for `web/package.json` updates its hash after test scripts
+changed. Every other parsed package field and the other four dependency inputs
+match the collected inputs. Package versions and notice texts are unchanged;
+this amendment does not claim a new collection or a verified image build.
 
 Git attributes preserve their bytes. The http-parser MIT text includes an upstream
 trailing space on its last line; the narrow whitespace exception retains that

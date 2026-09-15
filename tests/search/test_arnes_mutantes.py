@@ -150,7 +150,7 @@ def _pytest_falso(*rcs):
     n = {"i": 0}
     ultimo = {"v": guion[0]}
 
-    def stub(cwd, nodeids=None):
+    def stub(cwd, nodeids=None, salida_completa=None):
         if nodeids:
             return ultimo["v"]
         i = min(n["i"], len(guion) - 1)
@@ -172,16 +172,28 @@ def test_todo_muerto_y_censo_entero_da_go(arnes, monkeypatch):
     assert d["resumen"] == {"MUERTO": 2}
 
 
-def test_suite_limpia_en_rojo_no_corre_mutantes(arnes, monkeypatch):
+def test_suite_limpia_en_rojo_no_corre_mutantes(arnes, monkeypatch, capsys):
     monkeypatch.setattr(mut, "MUTANTES", _censo(2))
-    monkeypatch.setattr(mut, "_corre_pytest",
-                        lambda cwd, nodeids=None: (1, "1 failed", [NODO]))
+    diagnostico = (f"FAILED {NODO}[parametro-sintetico] - "
+                  "AssertionError: detalle-sintetico")
+
+    def control_rojo(cwd, nodeids=None, salida_completa=None):
+        if salida_completa is not None:
+            salida_completa.extend([diagnostico, "1 failed"])
+        return 1, "1 failed", [NODO]
+
+    monkeypatch.setattr(mut, "_corre_pytest", control_rojo)
     # La PRIMERA llamada es la suite limpia: si sale no-cero, no hay mutantes que valgan.
     assert mut.main() != 0
     d = _lee(arnes / "canon.json")
     assert d["suite_limpia"]["rc"] == 1
     assert d["estado_corrida"] == "SUJETO_EN_ROJO"
     assert d["resultados"] == {}
+    assert diagnostico in (arnes / "canon.json.suite-limpia.log").read_text()
+    salida = capsys.readouterr().out
+    assert f"FAILED {NODO} - AssertionError" in salida
+    assert "parametro-sintetico" not in salida
+    assert "detalle-sintetico" not in salida
 
 
 def test_excepcion_del_arnes_es_error_terminal_y_no_en_curso(arnes, monkeypatch):
@@ -190,7 +202,7 @@ def test_excepcion_del_arnes_es_error_terminal_y_no_en_curso(arnes, monkeypatch)
     monkeypatch.setattr(mut, "MUTANTES", _censo(2))
     llamadas = {"n": 0}
 
-    def revienta(cwd, nodeids=None):
+    def revienta(cwd, nodeids=None, salida_completa=None):
         llamadas["n"] += 1
         if llamadas["n"] == 1:
             return 0, "2 passed", []      # suite limpia verde
@@ -212,7 +224,7 @@ def test_senal_deja_interrumpido_y_no_muerto(arnes, monkeypatch):
     monkeypatch.setattr(mut, "MUTANTES", _censo(3))
     llamadas = {"n": 0}
 
-    def corta(cwd, nodeids=None):
+    def corta(cwd, nodeids=None, salida_completa=None):
         llamadas["n"] += 1
         if llamadas["n"] == 1:
             return 0, "2 passed", []
@@ -249,7 +261,7 @@ def test_aguja_duplicada_aborta_antes_de_correr_nada(arnes, monkeypatch):
     monkeypatch.setattr(mut, "MUTANTES", _censo(1))
     corridas = {"n": 0}
 
-    def cuenta(cwd, nodeids=None):
+    def cuenta(cwd, nodeids=None, salida_completa=None):
         corridas["n"] += 1
         return 0, "1 passed", []
 
@@ -266,7 +278,7 @@ def test_rc_cinco_no_pasa_el_gate_end_to_end(arnes, monkeypatch):
     monkeypatch.setattr(mut, "MUTANTES", _censo(2))
     llamadas = {"n": 0}
 
-    def rc5(cwd, nodeids=None):
+    def rc5(cwd, nodeids=None, salida_completa=None):
         llamadas["n"] += 1
         if llamadas["n"] == 1:
             return 0, "2 passed", []
@@ -292,7 +304,7 @@ def test_registra_la_deriva_del_arbol_vivo_sin_invalidar_la_congelada(arnes, mon
 
     llamadas = {"n": 0}
 
-    def corre(cwd, nodeids=None):
+    def corre(cwd, nodeids=None, salida_completa=None):
         if nodeids:
             return 1, "1 failed", [NODO]
         llamadas["n"] += 1
@@ -390,7 +402,7 @@ def test_la_suite_limpia_no_corre_dentro_de_la_pristina(arnes, monkeypatch):
     monkeypatch.setattr(mut, "MUTANTES", _censo(2))
     cwds = []
 
-    def espia(cwd, nodeids=None):
+    def espia(cwd, nodeids=None, salida_completa=None):
         if nodeids:
             return 1, "1 failed", [NODO]
         cwds.append(cwd)
@@ -406,6 +418,31 @@ def test_la_suite_limpia_no_corre_dentro_de_la_pristina(arnes, monkeypatch):
     for c in mutantes:
         assert not pathlib.Path(c, "basura_de_pytest.txt").exists() or c == limpia, (
             "la basura de la suite limpia llegó al árbol de un mutante")
+
+
+def test_congelar_y_clonar_conserva_ejecutables_sin_convertir_datos(tmp_path):
+    original = tmp_path / "original"
+    original.mkdir()
+    cli = original / "llmi"
+    cli.write_text("#!/bin/sh\nexit 0\n")
+    cli.chmod(0o751)
+    datos = original / "datos.sh"
+    datos.write_text("datos, no programa\n")
+    datos.chmod(0o644)
+    try:
+        mut._permisos(str(original), escribible=False)
+        assert cli.stat().st_mode & 0o111 == 0o111
+        assert not cli.stat().st_mode & 0o222
+        assert not datos.stat().st_mode & 0o111
+
+        copia = pathlib.Path(mut._clon(str(original), str(tmp_path / "copia")))
+        assert (copia / "llmi").stat().st_mode & 0o111 == 0o111
+        assert (copia / "llmi").stat().st_mode & 0o200
+        assert not (copia / "datos.sh").stat().st_mode & 0o111
+        assert (copia / "llmi").read_bytes() == cli.read_bytes()
+        assert not cli.stat().st_mode & 0o222, "clonar no descongela el original"
+    finally:
+        mut._permisos(str(original), escribible=True)
 
 
 def test_mata_falla_cerrado_si_el_hijo_sigue_vivo(monkeypatch):
@@ -511,7 +548,7 @@ def test_un_muerto_que_NO_se_reproduce_dirigido_no_cuenta(arnes, monkeypatch):
     monkeypatch.setattr(mut, "MUTANTES", _censo(1))
     guion = {"n": 0}
 
-    def flaky(cwd, nodeids=None):
+    def flaky(cwd, nodeids=None, salida_completa=None):
         guion["n"] += 1
         if guion["n"] == 1:
             return 0, "2 passed", []                   # suite limpia

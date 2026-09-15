@@ -96,7 +96,9 @@ def materiales_dockerfile(ruta):
             nombre, version = referencia, None
         uri = f"pkg:docker/{nombre}" + (f"@{version}" if version else "")
         if uri in resultado:
-            raise ValueError(f"Dockerfile repeats base material {uri!r}")
+            if resultado[uri] != digest:
+                raise ValueError(f"Dockerfile gives conflicting digests for base material {uri!r}")
+            continue
         resultado[uri] = digest
     return resultado
 

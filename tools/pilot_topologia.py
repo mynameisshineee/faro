@@ -289,12 +289,19 @@ def _usuario_no_root(nombre: str, user) -> list[str]:
 
 
 def verificar(compose: dict, *, gateway: str = "gateway", agente: str = "agente",
-              ledger_piloto: str | None = None) -> list[str]:
+              ledger_piloto: str | None = None,
+              token_var: str | None = "LLMINBOX_PILOT_TOKEN") -> list[str]:
     """Devuelve la lista de violaciones. Lista vacía = topología conforme.
 
     Se devuelven TODAS, no la primera: un verificador que corta al primer rojo
     obliga a N corridas para ver N problemas, y quien las arregla de una en una
     cree cada vez que ya está.
+
+    `token_var` es la variable de indirección que `LLMINBOX_TOKEN` tiene que
+    referenciar (`I10`). El defecto es la de M1, de una sola lane; el
+    verificador de dos lanes (`pilot_topologia_dual.py`) pasa aquí la variable
+    PROPIA de cada lane, porque exigir la misma en las dos sería exigir el
+    cruce que esa entrega existe para prohibir.
     """
     fallos: list[str] = []
     servicios = compose.get("services") or {}
@@ -556,7 +563,24 @@ def verificar(compose: dict, *, gateway: str = "gateway", agente: str = "agente"
     if not token:
         fallos.append("I10: el gateway no recibe `LLMINBOX_TOKEN` y el servicio "
                       "arranca mudo sin él")
-    elif not re.fullmatch(r"\$\{LLMINBOX_PILOT_TOKEN:\?[^{}]*\}", token.strip()):
+    elif token_var is None:
+        # Modo RELAJADO: para el verificador de dos lanes, que exige nombre
+        # ÚNICO por lane, no un nombre FIJO — exigir aquí el mismo nombre en
+        # las dos lanes sería exigir el cruce que esa entrega existe para
+        # prohibir. La unicidad entre lanes la comprueba
+        # `pilot_topologia_dual.verificar_dual` (`X2_IDENTIDAD`), no aquí.
+        m = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*):\?[^{}]*\}", token.strip())
+        if not m:
+            fallos.append(
+                f"I10: `LLMINBOX_TOKEN` es {_forma_de(token)} y tiene que ser una "
+                f"indirección OBLIGATORIA de la forma `${{VAR:?<motivo>}}` — sin "
+                f"default y sin componer con nada. El valor NO se reproduce a "
+                f"propósito: este mensaje acaba en el log del gate y en el ledger")
+        elif "LLMINBOX_TOKEN" in token.replace(m.group(1), ""):
+            fallos.append(f"I10: el valor compone con `LLMINBOX_TOKEN` "
+                          f"({_forma_de(token)}): hereda el token de la flota por la "
+                          f"puerta del default. El valor NO se reproduce")
+    elif not re.fullmatch(rf"\$\{{{re.escape(token_var)}:\?[^{{}}]*\}}", token.strip()):
         # La forma se exige ENTERA, no por prefijo. `${LLMINBOX_PILOT_TOKEN:-x}`
         # casaba con la aguja vieja y convierte el fail-closed en fail-open: quien
         # no ponga la variable arranca con un token conocido. Y
@@ -564,10 +588,10 @@ def verificar(compose: dict, *, gateway: str = "gateway", agente: str = "agente"
         # por la puerta del default justo la herencia que P1-4 cerró.
         fallos.append(
             f"I10: `LLMINBOX_TOKEN` es {_forma_de(token)} y la única forma admitida "
-            f"es `${{LLMINBOX_PILOT_TOKEN:?<motivo>}}` — obligatoria, sin default y "
+            f"es `${{{token_var}:?<motivo>}}` — obligatoria, sin default y "
             f"sin componer con nada. El valor NO se reproduce a propósito: este "
             f"mensaje acaba en el log del gate y en el ledger")
-    elif "LLMINBOX_TOKEN" in token.replace("LLMINBOX_PILOT_TOKEN", ""):
+    elif "LLMINBOX_TOKEN" in token.replace(token_var, ""):
         fallos.append(f"I10: el valor compone con `LLMINBOX_TOKEN` "
                       f"({_forma_de(token)}): hereda el token de la flota por la "
                       f"puerta del default. El valor NO se reproduce")
@@ -584,3 +608,15 @@ def verificar(compose: dict, *, gateway: str = "gateway", agente: str = "agente"
                           f"lee y sin ella se para, o peor, no discrimina")
 
     return fallos
+
+
+# ── API PÚBLICA para otros verificadores (p.ej. `pilot_topologia_dual.py`) ──
+#
+# Hallazgo de revisión estática (CFO/ADR-002, temprana): un módulo externo
+# llamando a `_normaliza_montajes`/`_partir_montaje` con el guion bajo se
+# apoya en una función que este fichero puede renombrar o mover sin previo
+# aviso — el guion bajo es justo la señal de «no es contrato». Se exponen
+# alias PÚBLICOS y nada más: la implementación sigue siendo una sola, así que
+# no hay lógica que pueda divergir entre la copia interna y la externa.
+normaliza_montajes = _normaliza_montajes
+partir_montaje = _partir_montaje

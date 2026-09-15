@@ -39,6 +39,40 @@ cerrado indicándolo — no inventa permisos ni un endpoint público.
 
 🔑 Una corrida finita es un ENSAYO ACOTADO: no acredita supervisión continua ni
 recuperación de varios días. Lo dice la guía y lo dice el exit code.
+
+`--continuo` es la opción EXPLÍCITA de operación sostenida: vueltas sin tope,
+con la memoria de ciclos y pendientes viva EN EL PROCESO, renovación de sesión
+al acercarse el plazo por el contrato REAL del gateway (`POST
+/native/v1/sessions/refresh`, ttl 30..3600) y cierre ordenado ante
+SIGINT/SIGTERM.
+
+La renovación es ROTACIÓN — token nuevo, rti hijo NUEVO y el token previo
+revocado en la misma transacción — pero el hijo CONSERVA principal, role,
+lane y `generation` (medido en fuente, `coordination.refresh_session`): es
+renovación autenticada de la MISMA autoridad, no un agente ajeno. Por eso el
+camino normal la ADOPTA, con doble validación y sin soltar nada en el aire:
+
+  1. recibo completo: token, runtime_instance, expires_at y generation;
+  2. `whoami` CON EL TOKEN HIJO: mismo rti que el recibo, plazo presente y
+     autoridad (principal/role/lane) IDÉNTICA a la consultada al arranque;
+     la generación se confirma en `GET /runtimes/{rti}` porque el contrato
+     público de `whoami` no la expone.
+  3. Transición SÓLO sin peticiones en vuelo: si queda algo pendiente, la
+     vuelta lo reanuda con los mismos bytes y clave bajo la sesión VIGENTE;
+     si no puede resolverse antes de expirar, parada visible con los
+     pendientes declarados — sin revocación anticipada ni olvido.
+  4. Adopción: contextos y secuencias NUEVOS para el rti hijo (nonce nuevo:
+     una secuencia jamás se reutiliza con identidad distinta), conservando
+     los vínculos pid+arranque y el estado del sensor (las transiciones de
+     degradación ya vistas no se pierden).
+
+Si el recibo no se puede validar, el whoami del hijo no cuadra o la autoridad
+cambia (principal/role/lane distintos), la corrida termina VISIBLE con lo
+pendiente declarado. La sesión del supervisor no exige nueva activación del
+organigrama por cada token renovado: la generación del observador que entra
+en el contexto sale del RECIBO y la confirma el runtime hijo en
+`GET /runtimes/{rti}`, no del estado del runtime propio ni de un campo que el
+`whoami` público no promete.
 """
 from __future__ import annotations
 
@@ -64,7 +98,17 @@ from supervisor_runner import CicloSupervisor
 
 RUTA_WHOAMI = "/native/v1/whoami"
 RUTA_RUNTIMES = "/native/v1/runtimes/"
+RUTA_REFRESCO = "/native/v1/sessions/refresh"
+# Contrato del refresh, MEDIDO en 2626de2 (`coordination.SessionRequest`):
+# ttl_s ge=30 le=3600, defecto 900. La respuesta (`_session_wire`) trae la
+# sesión HIJA con `generation` (no `credential_generation`) y, con el gateway
+# actual, un `runtime_instance` NUEVO.
+TTL_MIN, TTL_MAX = 30, 3600
 MAX_MOTIVO_LINEA = 120
+# Techo de lectura del token (menor ②a de security, MARK:security-revision-del-
+# supervisor-2626de2): misma forma que la referencia de la casa
+# (runtime_root: PEPPER_MAX_BYTES). Un Bearer de sesión sobra con mucho menos.
+MAX_BYTES_TOKEN = 4096
 
 EX_OK = 0
 EX_PRECONDICION = 2
@@ -119,11 +163,25 @@ class CiclosPorVinculoConContexto(CC.CiclosPorVinculo):
     la petición en el aire). Que este subprocesso exista y sea tan pequeño es
     la señal de que la cura de verdad vive EN la fábrica; si sube a la rama
     principal, esta clase se borra sin tocar a nadie más.
+
+    `estados_de` es la segunda extensión (renovación validada): al reconstruir
+    los ciclos bajo el rti hijo, el ESTADO DEL SENSOR de cada vínculo
+    (`CicloSupervisor.estado`, un `EstadoDelMuestreador`) se reintroduce por
+    clave (rti, pid, arranque) para no perder las transiciones de degradación
+    ya observadas. `estados()` es la contra: la instantánea que la renovación
+    toma ANTES de soltar la fábrica vieja.
     """
 
-    def __init__(self, transporte_de, contextos: dict[str, tuple], **kw) -> None:
+    def __init__(self, transporte_de, contextos: dict[str, tuple],
+                 estados_de: dict | None = None, **kw) -> None:
         super().__init__(transporte_de, **kw)
         self._contextos = contextos
+        self._estados_de = estados_de or {}
+
+    def estados(self) -> dict:
+        """Instantánea clave → EstadoDelMuestreador de los ciclos vivos."""
+        return {clave: entrada.ciclo.estado
+                for clave, entrada in self._ciclos.items()}
 
     def __call__(self, v: RG.Vinculo):
         clave = self._clave(v)
@@ -136,7 +194,8 @@ class CiclosPorVinculoConContexto(CC.CiclosPorVinculo):
                                         contexto=self._contextos[v.runtime_instance]),
                     workload_id=v.workload_id,
                     runtime_instance=v.runtime_instance,
-                    umbral_rss_bytes=self._umbral),
+                    umbral_rss_bytes=self._umbral,
+                    estado=self._estados_de.pop(clave, None)),
                 nonce=self._nonce_de())
             self._ciclos[clave] = estado
         estado.pasadas += 1
@@ -148,30 +207,61 @@ class Driver:
     """Una corrida FINITA sobre objetivos dados. Observa; no actúa."""
 
     def __init__(self, base_url: str, token: str, objetivos: list[tuple[str, int]], *,
-                 fichero_sesion: str, vueltas: int, intervalo_s: float,
-                 timeout_s: float = 20.0,
+                 fichero_sesion: str, vueltas: int | None = None, intervalo_s: float = 15.0,
+                 timeout_s: float = 20.0, continuo: bool = False, ttl_s: int = 900,
+                 margen_s: float = 120.0,
                  reloj: callable = time.time, espera: callable = time.sleep,
                  enviar: callable | None = None) -> None:
         # El periódico ya valida su intervalo, pero con ValueError TARDÍO y
         # tras el handshake; aquí muere ANTES de hablar con nadie. `nan` pasa
         # toda comparación e `inf` duerme para siempre: finito o no arranca.
-        for nombre, valor in (("intervalo_s", intervalo_s), ("timeout_s", timeout_s)):
+        for nombre, valor in (("intervalo_s", intervalo_s), ("timeout_s", timeout_s),
+                              ("margen_s", margen_s)):
             if isinstance(valor, bool) or not isinstance(valor, (int, float)) \
                     or not math.isfinite(valor) or valor <= 0:
                 raise ValueError(f"{nombre} tiene que ser un número finito y positivo")
+        # ttl del refresco: contrato del gateway (SessionRequest ge=30 le=3600).
+        if type(ttl_s) is not int or not TTL_MIN <= ttl_s <= TTL_MAX:
+            raise ValueError(
+                f"ttl_s tiene que ser un entero en {TTL_MIN}..{TTL_MAX}")
+        # El margen se compara contra el RESTANTE de la sesión, cuyo techo es
+        # el ttl pedido en cada renovación: margen >= ttl haría que cada
+        # adopción naciera ya "dentro" del margen — renovación en bucle.
+        if margen_s >= ttl_s:
+            raise ValueError(
+                f"margen_s ({margen_s}) tiene que ser menor que ttl_s ({ttl_s}): "
+                "el refresco debe quedar dentro del plazo que cada renovación pide")
         self._base = base_url.rstrip("/")
         self._token = token
         self._objetivos = objetivos            # [(runtime_instance, pid)] del operador
         self._fichero_sesion = fichero_sesion
-        self._vueltas = vueltas
+        # API directa y CLI comparten el mismo valor por defecto. En modo
+        # continuo el contador se ignora, pero conservar un entero aquí evita
+        # que una instancia programática tenga un estado distinto al de
+        # `main(--continuo)`.
+        self._vueltas = 4 if vueltas is None else vueltas
         self._intervalo = intervalo_s
         self._timeout = timeout_s
+        self._continuo = continuo
+        self._ttl_s = ttl_s
+        self._margen = margen_s
         self._reloj = reloj
         self._espera = espera
         self._enviar = enviar                  # inyectable: los tests guionizan el socket
         self.observer_rti: str | None = None
+        self._rti_observador_declarado: str | None = None
         self.deadline: float | None = None
-        self._generacion_propia: int | None = None
+        # Generación del OBSERVIDOR que entra en el contexto. Al arrancar sale
+        # del runtime propio (credential_generation); tras una renovación
+        # validada, del RECIBO — el hijo no exige activación de organigrama y
+        # el estado del propio runtime no es la fuente correcta para su sesión.
+        self._generacion_observador: int | None = None
+        self._autoridad: tuple | None = None   # (principal, role, lane) del arranque
+        self._autoridad_caps: frozenset | None = None  # conjunto exacto de capacidades
+        self._transportes: list[T.TransporteSupervisor] = []
+        self._estados_conservar: dict = {}     # sensor entre renovaciones
+        self._ciclos = None                    # fábrica viva (para estados())
+        self._parar = False                    # SIGINT/SIGTERM en continuo
         self.fallos_total = 0
         self.retirados_total = 0
         self.sensor_total = 0
@@ -191,10 +281,13 @@ class Driver:
             raise PrecondicionFallida("la respuesta del gateway no es un objeto")
         return cuerpo
 
-    def consulta(self, ruta: str) -> tuple[int, dict]:
-        """GET autenticado. Inyectable en tests; sin redirects (no se sigue 30x)."""
+    def consulta(self, ruta: str, token: str | None = None) -> tuple[int, dict]:
+        """GET autenticado. Inyectable en tests; sin redirects (no se sigue 30x).
+        `token` permite preguntar por una credencial que aún NO se adopta — el
+        whoami del hijo de la renovación se hace con el token HIJO antes de
+        tocar ningún estado del driver."""
         req = urllib.request.Request(f"{self._base}{ruta}")
-        req.add_header("Authorization", f"Bearer {self._token}")
+        req.add_header("Authorization", f"Bearer {token or self._token}")
         try:
             with urllib.request.build_opener(T._SinRedirects()).open(
                     req, timeout=self._timeout) as r:
@@ -205,6 +298,183 @@ class Driver:
         except (urllib.error.URLError, TimeoutError, OSError):
             # Sin texto del error: arrastra URL y a veces credencial.
             raise PrecondicionFallida("sin respuesta del gateway") from None
+
+    def refresca(self, ttl_s: int) -> tuple[int, dict]:
+        """POST /native/v1/sessions/refresh con el Bearer VIGENTE. Misma postura
+        de red que `consulta`: sin redirects (un 30x reenviaría el Bearer),
+        lectura acotada, sin propagar texto de red."""
+        req = urllib.request.Request(f"{self._base}{RUTA_REFRESCO}",
+                                     data=json.dumps({"ttl_s": ttl_s}).encode(),
+                                     method="POST")
+        req.add_header("Authorization", f"Bearer {self._token}")
+        req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.build_opener(T._SinRedirects()).open(
+                    req, timeout=self._timeout) as r:
+                return r.status, self._cuerpo_de(
+                    r.read(T.MAX_CUERPO_RESPUESTA + 1))
+        except urllib.error.HTTPError as exc:
+            return exc.code, self._cuerpo_de(exc.read(T.MAX_CUERPO_RESPUESTA + 1))
+        except (urllib.error.URLError, TimeoutError, OSError):
+            raise PrecondicionFallida("sin respuesta del gateway") from None
+
+    def _renueva(self, ciclos: CC.CiclosPorVinculo,
+                 registro: RG.RegistroDeSupervision) -> tuple:
+        """Renovación VALIDADA al acercarse el plazo. Contrato REAL (medido en
+        2626de2 y endurecido por el REQUEST MARK:codex-supervisor-review-
+        85cacb2): `refresh_session` ROTA — token nuevo, rti hijo NUEVO, token
+        previo revocado en la misma transacción — y el hijo CONSERVA
+        principal, role, lane, capacidades y generation. Eso se EXIGE, no se
+        supone: el recibo (`_session_wire` del gateway) y el whoami del hijo
+        se validan COMPLETOS — campos, tipos, autoridad inicial y plazos
+        semánticos — y SÓLO después se adopta. → ("parada", estado, motivo)
+        | ("ok", ciclos, periodico).
+
+        Motivos ACOTADOS: estados HTTP y vocabulario propio; nunca cuerpo
+        remoto. El token nuevo jamás va al libro ni a stdout.
+        """
+        try:
+            status, recibo = self.refresca(self._ttl_s)
+        except PrecondicionFallida:
+            return ("parada", "sesion_terminada_sin_refresco",
+                    "sin respuesta del gateway al refrescar")
+        if status != 200:
+            return ("parada", "sesion_terminada_sin_refresco",
+                    f"refresh HTTP {status}")
+        # ① EL RECIBO COMPLETO, tipado y contra la autoridad DEL ARRANQUE,
+        # antes de tocar nada. Si el gateway ya rotó, el token previo está
+        # revocado: no hay vuelta atrás y se declara tal cual.
+        token = recibo.get("token")
+        rti = recibo.get("runtime_instance")
+        generacion = recibo.get("generation")
+        if not isinstance(token, str) or not token.strip() \
+                or not isinstance(rti, str) or not rti.strip() \
+                or type(generacion) is not int or isinstance(generacion, bool):
+            return ("parada", "identidad_rotada",
+                    "recibo de refresco ilegible: la sesión previa ya no existe")
+        try:
+            deadline_recibo = _parse_expira(recibo.get("expires_at"))
+        except PrecondicionFallida:
+            return ("parada", "identidad_rotada", "expires_at del recibo ilegible")
+        if deadline_recibo <= self._reloj():
+            return ("parada", "identidad_rotada",
+                    "el recibo trae un plazo ya vencido: no hay refresco vivo")
+        if tuple(recibo.get(k) for k in ("principal", "role", "lane")) \
+                != self._autoridad \
+                or frozenset(recibo.get("capabilities") or ()) != self._autoridad_caps \
+                or generacion != self._generacion_observador:
+            # La generación CONSERVADA es parte de «misma autoridad»: un recibo
+            # con otra generación no es renovación de la misma persona.
+            return ("parada", "autoridad_incompatible",
+                    "el recibo de renovación no reproduce la autoridad del "
+                    "arranque (principal/role/lane, capacidades o generación)")
+        # ② WHOAMI CON EL TOKEN HIJO (sin adoptarlo aún): el recibo declara y
+        # el servidor confirma quién ES el token. El whoami público no incluye
+        # generación, así que se confirma después en el runtime hijo; nunca se
+        # usa el recibo como fallback para una respuesta explícita del servidor.
+        try:
+            status, hijo = self.consulta(RUTA_WHOAMI, token=token)
+        except PrecondicionFallida:
+            return ("parada", "identidad_rotada",
+                    "whoami del hijo sin respuesta; el token previo ya está revocado")
+        if status != 200:
+            return ("parada", "identidad_rotada", f"whoami del hijo HTTP {status}")
+        if hijo.get("runtime_instance") != rti:
+            return ("parada", "identidad_rotada",
+                    "whoami del hijo no cuadra con el recibo")
+        if "generation" in hijo:
+            gen_hijo = hijo.get("generation")
+            if type(gen_hijo) is not int or isinstance(gen_hijo, bool) \
+                    or gen_hijo != generacion:
+                return ("parada", "identidad_rotada",
+                        "el whoami del hijo no confirma la generación del recibo")
+        else:
+            try:
+                # El rti hijo recién rotado aún no consta como workload del
+                # organigrama: el registro conserva el rti ORIGINAL del
+                # observador. Se consulta esa fila con el token hijo, que es
+                # la misma autoridad, para confirmar su generation durable.
+                rti_declarado = self._rti_observador_declarado or rti
+                status, runtime_hijo = self.consulta(
+                    RUTA_RUNTIMES + urllib.parse.quote(rti_declarado, safe=""),
+                    token=token)
+            except PrecondicionFallida:
+                return ("parada", "identidad_rotada",
+                        "runtime declarado del observador sin respuesta; no "
+                        "confirma su generación")
+            if status != 200:
+                return ("parada", "identidad_rotada",
+                        f"runtime declarado del observador HTTP {status}; no "
+                        "confirma su generación")
+            gen_hijo = runtime_hijo.get("credential_generation")
+            if type(gen_hijo) is not int or isinstance(gen_hijo, bool) \
+                    or gen_hijo != generacion:
+                return ("parada", "identidad_rotada",
+                        "el runtime declarado del observador no confirma la "
+                        "generación del recibo")
+        if tuple(hijo.get(k) for k in ("principal", "role", "lane")) \
+                != self._autoridad \
+                or frozenset(hijo.get("capabilities") or ()) != self._autoridad_caps:
+            return ("parada", "autoridad_incompatible",
+                    "la sesión renovada sirve otra autoridad (principal/role/lane "
+                    "o capacidades)")
+        # ③ LOS PLAZOS, semánticos: parseados, FUTUROS e iguales recibo↔hijo.
+        try:
+            deadline_hijo = _parse_expira(hijo["expires_at"])
+        except PrecondicionFallida:
+            return ("parada", "identidad_rotada", "expires_at del hijo ilegible")
+        if deadline_hijo <= self._reloj():
+            return ("parada", "identidad_rotada", "el plazo confirmado ya venció")
+        if deadline_hijo != deadline_recibo:
+            return ("parada", "identidad_rotada",
+                    "el plazo del whoami del hijo no cuadra con el recibo")
+        # ── ADOPTAR: recibo y servidor dijeron lo mismo, con plazo futuro ──
+        self._token = token
+        self.observer_rti = rti
+        self._generacion_observador = generacion
+        self.deadline = deadline_hijo
+        # Contextos NUEVOS para el nuevo observador (los objetivos no cambian:
+        # mismos workloads activados, mismos pids registrados — jamás se
+        # re-adopta un pid nuevo).
+        contextos: dict[str, tuple] = {}
+        try:
+            for v in registro.vinculos():
+                _workload, contexto = self._objetivo_servidor(v.runtime_instance)
+                contextos[v.runtime_instance] = contexto
+        except PrecondicionFallida as exc:
+            return ("parada", "contextos_irreconstruibles", _acota(exc, 120))
+        # El estado del sensor viaja a la fábrica nueva; los nonces no (una
+        # secuencia jamás se reutiliza con identidad distinta).
+        self._estados_conservar = ciclos.estados()
+        self._transportes = []          # los transportes viejos llevan token muerto
+        ciclos_nuevos, periodico_nuevo = self._monta(registro, contextos)
+        return ("ok", ciclos_nuevos, periodico_nuevo)
+
+    def _instala_senales(self) -> dict:
+        """SIGINT/SIGTERM → bandera, sólo en continuo y en el hilo principal.
+        La vuelta EN CURSO termina y el cierre es ordenado: sin matar envíos a
+        medias y con el libro fuera de `en_marcha`. Devuelve los handlers
+        previos: el driver los RESTAURA al salir (es un invitado, no el dueño
+        del proceso)."""
+        import signal
+        import threading
+        if threading.current_thread() is not threading.main_thread():
+            return {}
+        def _apunta(_signum, _frame):
+            self._parar = True
+        previos = {}
+        for senal in (signal.SIGINT, signal.SIGTERM):
+            previos[senal] = signal.getsignal(senal)
+            signal.signal(senal, _apunta)
+        return previos
+
+    def _restaura_senales(self, previos: dict) -> None:
+        import signal
+        for senal, handler in previos.items():
+            try:
+                signal.signal(senal, handler)
+            except (TypeError, ValueError, OSError):
+                pass  # el handler previo ya no es reinstalable: no empeora la salida
 
     def autentica(self) -> None:
         """whoami + propio runtime: identidad y plazo vienen del SERVIDOR."""
@@ -221,7 +491,13 @@ class Driver:
         if "expires_at" not in cuerpo:
             raise PrecondicionFallida("whoami sin expires_at: no arranco sin plazo")
         self.observer_rti = rti
+        self._rti_observador_declarado = rti
         self.deadline = _parse_expira(cuerpo["expires_at"])
+        # La autoridad que la renovación tendrá que reproducir: principal,
+        # role y lane CONSULTADOS (una renovación que sirva otros es otra
+        # persona aunque traiga un recibo válido).
+        self._autoridad = tuple(cuerpo.get(k) for k in ("principal", "role", "lane"))
+        self._autoridad_caps = frozenset(cuerpo.get("capabilities") or ())
         status, propio = self.consulta(RUTA_RUNTIMES + urllib.parse.quote(rti, safe=""))
         if status != 200:
             raise PrecondicionFallida(
@@ -231,7 +507,7 @@ class Driver:
         if type(generacion) is not int or isinstance(generacion, bool):
             raise PrecondicionFallida(
                 "el propio runtime no expone credential_generation")
-        self._generacion_propia = generacion
+        self._generacion_observador = generacion
         print(f"observador (consultado al servidor, no declarado): {rti} · "
               f"expira_en epoch {int(self.deadline)}", flush=True)
 
@@ -250,11 +526,31 @@ class Driver:
         if not isinstance(workload, str) or not workload.strip() or \
                 type(generacion) is not int or isinstance(generacion, bool):
             raise PrecondicionFallida(f"runtime {rti} sin identidad servida completa")
-        contexto = (self.observer_rti, self._generacion_propia, rti, generacion)
+        contexto = (self.observer_rti, self._generacion_observador, rti, generacion)
         return workload, contexto
 
+    def _monta(self, registro: RG.RegistroDeSupervision,
+               contextos: dict[str, tuple]) -> tuple:
+        """Transportes + fábrica + periódico para los contextos dados. Se usa
+        en el arranque y tras CADA renovación validada: identidad nueva ⇒
+        transportes nuevos (token nuevo), secuencias nuevas (nonce nuevo),
+        sensor conservado (`_estados_conservar` se consume aquí)."""
+        def transporte_de(v: RG.Vinculo) -> T.TransporteSupervisor:
+            t = T.TransporteSupervisor(self._base, self._token,
+                                       contexto=contextos[v.runtime_instance],
+                                       timeout=self._timeout, enviar=self._enviar)
+            self._transportes.append(t)
+            return t
+
+        ciclos = CiclosPorVinculoConContexto(transporte_de, contextos,
+                                             estados_de=self._estados_conservar)
+        self._estados_conservar = {}
+        periodico = SP.SupervisorPeriodico(registro, ciclos, intervalo_s=self._intervalo)
+        return ciclos, periodico
+
     def corre(self) -> int:
-        """Monta registro+transporte, corre `vueltas` pasadas, devuelve exit code."""
+        """Monta registro+transporte y corre: `vueltas` pasadas en finito, sin
+        tope en continuo. Devuelve el exit code."""
         self.autentica()
         registro = RG.RegistroDeSupervision()
         contextos: dict[str, tuple] = {}
@@ -264,20 +560,62 @@ class Driver:
             # un vínculo a medias sería supervisión aparente.
             registro.registra(workload_id=workload, runtime_instance=rti, pid=pid)
             contextos[rti] = contexto
+        ciclos, periodico = self._monta(registro, contextos)
+        self._ciclos = ciclos
 
-        def transporte_de(v: RG.Vinculo) -> T.TransporteSupervisor:
-            return T.TransporteSupervisor(self._base, self._token,
-                                          contexto=contextos[v.runtime_instance],
-                                          timeout=self._timeout, enviar=self._enviar)
+        previos = self._instala_senales() if self._continuo else {}
+        try:
+            return self._bucle(registro, ciclos, periodico)
+        finally:
+            if previos:
+                self._restaura_senales(previos)
 
-        ciclos = CiclosPorVinculoConContexto(transporte_de, contextos)
-        periodico = SP.SupervisorPeriodico(registro, ciclos, intervalo_s=self._intervalo)
-
+    def _bucle(self, registro: RG.RegistroDeSupervision,
+               ciclos: CC.CiclosPorVinculo, periodico: SP.SupervisorPeriodico) -> int:
+        """El bucle de vueltas. En continuo, la RENOVACIÓN VALIDADA reemplaza
+        `ciclos` y `periodico` por fábrica nueva (misma autoridad confirmada,
+        secuencias nuevas, sensor conservado) y el bucle sigue con ellos."""
         self._abre_sesion(registro)
         completadas = 0
-        codigo = EX_OK
-        for i in range(self._vueltas):
-            if self._reloj() >= self.deadline:
+        tope = math.inf if self._continuo else self._vueltas
+        while completadas < tope:
+            if self._parar:
+                return self._para_por_senal(ciclos, registro, completadas)
+            if self._continuo:
+                if self._reloj() >= self.deadline:
+                    # El margen no bastó — típicamente pendientes que no
+                    # resolvieron a tiempo. Parada visible con lo declarado.
+                    motivo = ("la sesión expiró con observaciones sin resolver: "
+                              "se resuelven bajo la sesión vigente o se declaran, "
+                              "nunca se rotan en el aire"
+                              if ciclos.pendientes() else
+                              "la sesión expiró sin renovación")
+                    return self._para_sesion(ciclos, completadas,
+                                             "sesion_terminada_sin_refresco", motivo)
+                if self._reloj() + self._margen >= self.deadline:
+                    if ciclos.pendientes():
+                        # Regla de transición: SÓLO se renueva sin peticiones
+                        # en vuelo. La vuelta reanuda lo pendiente con los
+                        # mismos bytes y clave bajo la sesión VIGENTE; si no
+                        # se resuelve antes de expirar, la parada de arriba
+                        # declara. Sin revocación anticipada ni olvido.
+                        pass
+                    else:
+                        observador_previo = self.observer_rti
+                        veredicto = self._renueva(ciclos, registro)
+                        if veredicto[0] == "parada":
+                            return self._para_sesion(ciclos, completadas,
+                                                     veredicto[1], veredicto[2])
+                        ciclos, periodico = veredicto[1], veredicto[2]
+                        self._ciclos = ciclos
+                        print(f"REFRESCO: renovación validada y adoptada "
+                              f"({observador_previo} → {self.observer_rti}, "
+                              "misma autoridad y generación): contextos y "
+                              "secuencias nuevos "
+                              "(la secuencia no se reutiliza), sensor "
+                              f"conservado · expira_en epoch {int(self.deadline)}",
+                              flush=True)
+            elif self._reloj() >= self.deadline:
                 self._cierra_sesion(completadas, "sesion_expirada")
                 print(f"PARADA: sesión expirada tras {completadas}/{self._vueltas} "
                       "vueltas; la memoria de ciclos termina con el proceso y una "
@@ -297,8 +635,25 @@ class Driver:
                 # no es el objetivo.
                 ciclos.retira(rti)
             self._cierra_sesion(completadas, "en_marcha")
-            if i + 1 < self._vueltas:
-                self._espera(max(0.0, self._intervalo - (self._reloj() - t0)))
+            if completadas < tope and not self._parar:
+                # En continuo la espera se parte en rodajas: la señal se nota
+                # sin esperar el intervalo entero (PEP 475 reanudaría el sleep).
+                fin = self._reloj() + max(0.0, self._intervalo - (self._reloj() - t0))
+                if self._continuo:
+                    # La espera cabe DENTRO del margen: el refresco es puntual,
+                    # no una vuelta tarde. Y ya dentro del margen (p. ej. con
+                    # pendientes que bloquean la renovación) el tope pasa a ser
+                    # la EXPIRACIÓN: se duerme hasta ella en vez de girar en
+                    # vacío entre vueltas.
+                    tope_espera = self.deadline - self._margen
+                    if self._reloj() >= tope_espera:
+                        tope_espera = self.deadline
+                    fin = min(fin, tope_espera)
+                while not self._parar:
+                    resto = fin - self._reloj()
+                    if resto <= 0:
+                        break
+                    self._espera(min(resto, 0.5))
 
         pendientes = ciclos.pendientes()
         incidencias = bool(pendientes or self.fallos_total or self.sensor_total)
@@ -319,7 +674,44 @@ class Driver:
             # Acabar las vueltas NO es éxito: ni lo que quedó en el aire ni un
             # instrumento caído se tapan con un 0 — sin sensor tampoco SE MIRA.
             codigo = EX_INCIDENCIAS
+        else:
+            codigo = EX_OK
         return codigo
+
+    def _para_por_senal(self, ciclos: CC.CiclosPorVinculo,
+                        registro: RG.RegistroDeSupervision,
+                        completadas: int) -> int:
+        """Cierre ordenado ante señal: la vuelta en curso YA terminó. El libro
+        primero, el rc después (misma regla que el cierre normal)."""
+        pendientes = ciclos.pendientes()
+        incidencias = bool(pendientes or self.fallos_total or self.sensor_total)
+        # El libro declara lo que quedó en el aire TAMBIÉN al cierre por señal
+        # (misma honestidad que `_para_sesion`): la salida se pierde, el libro no.
+        self._sesion["pendientes_al_cierre"] = pendientes
+        self._cierra_sesion(completadas, "parado_por_senal")
+        print(f"PARADA: señal recibida; cierre ordenado tras {completadas} "
+              f"vueltas · vínculos vivos al cierre: {len(registro)} · retirados "
+              f"en la corrida: {self.retirados_total} · fallos: "
+              f"{self.fallos_total} · observaciones sin resolver: "
+              f"{len(pendientes)}"
+              + (f" {', '.join(pendientes)}" if pendientes else ""), flush=True)
+        return EX_INCIDENCIAS if incidencias else EX_OK
+
+    def _para_sesion(self, ciclos: CC.CiclosPorVinculo, completadas: int,
+                     estado: str, motivo: str) -> int:
+        """Parada VISIBLE de la sesión continua: renovación no validable,
+        autoridad incompatible, contextos irreconstruibles o expiración con
+        lo pendiente sin resolver. Lo pendiente queda declarado en salida Y
+        libro — nunca descartado en silencio."""
+        pendientes = ciclos.pendientes()
+        self._sesion["pendientes_al_cierre"] = pendientes
+        mensaje = (f"PARADA: {motivo} tras {completadas} vueltas; la sesión "
+                   "termina y lo pendiente se declara, no se descarta. "
+                   f"Observaciones sin resolver: {len(pendientes)}"
+                   + (f" {', '.join(pendientes)}" if pendientes else ""))
+        self._cierra_sesion(completadas, estado)
+        print(mensaje, flush=True)
+        return EX_SESION_EXPIRADA
 
     @staticmethod
     def _linea(n: int, r: SP.ResultadoDeVuelta) -> str:
@@ -339,7 +731,9 @@ class Driver:
                      for v in registro.vinculos()]
         self._sesion = {"driver_pid": os.getpid(), "base_url": self._base,
                         "observer_rti": self.observer_rti,
-                        "vueltas_pedidas": self._vueltas, "vueltas_completadas": 0,
+                        "continuo": self._continuo,
+                        "vueltas_pedidas": None if self._continuo else self._vueltas,
+                        "vueltas_completadas": 0,
                         "objetivos": objetivos, "estado": "en_marcha",
                         "iniciado_en": _iso(self._reloj())}
         self._escribe_sesion()
@@ -368,13 +762,21 @@ def _iso(epoch: float) -> str:
 
 
 def lee_token(ruta: str) -> str:
-    """Contrato del fichero privado de token: REGULAR, 600 EXACTO, no vacío.
+    """Contrato del fichero privado de token: REGULAR, 600 EXACTO, TUYO, no
+    vacío, con techo de lectura EN BYTES.
 
     «No 600 exacto» incluye 0o400 (el bit de dueño no es el contrato) y 0o640
     (legible por el grupo). Un token legible por otros en una máquina
     multi-carril es la fuga más barata de cometer y la más cara de rastrear:
-    se rechaza ANTES de usarlo. Toda incidencia de lectura es PrecondicionFallida:
-    un traceback aquí puede llevar material de credenciales a la consola.
+    se rechaza ANTES de usarlo. El chequeo de uid NO duplica el 0600: para un
+    proceso no-root, un 0600 ajeno ya es ilegible; el uid cierra el único caso
+    donde eso deja de valer — correr como root, donde el 0600 ajeno SÍ se lee.
+    La lectura es binaria y ACOTADA (`MAX_BYTES_TOKEN + 1` BYTES, decodificada
+    UTF-8 después): un techo aplicado en modo texto contaría CARACTERES y un
+    token multibyte podría pasarse de bytes sin saltar la alarma (corrección
+    del REQUEST MARK:codex-supervisor-renovacion-real). Toda incidencia es
+    PrecondicionFallida: un traceback aquí puede llevar material de
+    credenciales a la consola.
     """
     fd = None
     try:
@@ -389,14 +791,27 @@ def lee_token(ruta: str) -> str:
             raise PrecondicionFallida(
                 f"el fichero de token {ruta} tiene permisos {oct(modo)}: "
                 "se exige 600 exacto")
-        with os.fdopen(fd, "r", encoding="utf-8") as f:
+        if info.st_uid != os.geteuid():
+            raise PrecondicionFallida(
+                f"el fichero de token {ruta} pertenece a otro uid: no se "
+                "adoptan credenciales ajenas")
+        with os.fdopen(fd, "rb") as f:
             fd = None  # el contexto del fichero se encarga de cerrarlo
-            token = f.read().strip()
-    except (OSError, UnicodeError):
+            crudo = f.read(MAX_BYTES_TOKEN + 1)
+    except OSError:
         raise PrecondicionFallida(f"no puedo leer el token en {ruta}") from None
     finally:
         if fd is not None:
             os.close(fd)
+    if len(crudo) > MAX_BYTES_TOKEN:
+        raise PrecondicionFallida(
+            f"el token en {ruta} excede el techo de lectura "
+            f"({MAX_BYTES_TOKEN} bytes)")
+    try:
+        token = crudo.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        raise PrecondicionFallida(
+            f"el token en {ruta} no es UTF-8 legible") from None
     if not token:
         raise PrecondicionFallida(f"token vacío en {ruta}")
     return token
@@ -412,9 +827,19 @@ def main(argv: list[str] | None = None) -> int:
                    help="fichero con el Bearer de sesión (600); nunca argv")
     p.add_argument("--objetivo", action="append", required=True, metavar="RTI:PID",
                    help="registro EXPLÍCITO; el workload_id lo sirve el gateway")
-    p.add_argument("--vueltas", type=int, default=4)
+    p.add_argument("--vueltas", type=int, default=None)
     p.add_argument("--intervalo-s", type=float, default=15.0)
     p.add_argument("--timeout-s", type=float, default=20.0)
+    p.add_argument("--continuo", action="store_true",
+                   help="vueltas sin tope: renueva la sesión al acercarse el "
+                        "plazo (rotación validada con whoami del hijo y "
+                        "adoptada si es la misma autoridad) y cierra ordenado "
+                        "ante SIGINT/SIGTERM; parada VISIBLE si la renovación "
+                        "no se puede validar")
+    p.add_argument("--ttl-s", type=int, default=900,
+                   help="ttl_s pedido en el refresco (contrato: 30..3600)")
+    p.add_argument("--refresco-margen-s", type=float, default=120.0,
+                   help="antelación con la que se intenta el refresco")
     p.add_argument("--fichero-sesion", required=True)
     args = p.parse_args(argv)
 
@@ -426,15 +851,25 @@ def main(argv: list[str] | None = None) -> int:
             return EX_PRECONDICION
         objetivos.append((rti, int(pid)))
 
-    if args.vueltas < 1:
+    if args.continuo and args.vueltas is not None:
+        print("--continuo y --vueltas son modos excluyentes", file=sys.stderr)
+        return EX_PRECONDICION
+    vueltas = 4 if args.vueltas is None else args.vueltas
+    if vueltas < 1:
         print("hay que pedir al menos una vuelta", file=sys.stderr)
+        return EX_PRECONDICION
+    if args.ttl_s < TTL_MIN or args.ttl_s > TTL_MAX:
+        print(f"--ttl-s tiene que estar en {TTL_MIN}..{TTL_MAX} "
+              "(contrato del refresh del gateway)", file=sys.stderr)
         return EX_PRECONDICION
 
     try:
         token = lee_token(args.token_file)
         driver = Driver(args.base_url, token, objetivos,
-                        fichero_sesion=args.fichero_sesion, vueltas=args.vueltas,
-                        intervalo_s=args.intervalo_s, timeout_s=args.timeout_s)
+                        fichero_sesion=args.fichero_sesion, vueltas=vueltas,
+                        intervalo_s=args.intervalo_s, timeout_s=args.timeout_s,
+                        continuo=args.continuo, ttl_s=args.ttl_s,
+                        margen_s=args.refresco_margen_s)
         return driver.corre()
     except (PrecondicionFallida, ValueError) as exc:
         # ValueError: parámetros no finitos. Precondición, no traceback.

@@ -7,14 +7,21 @@ SQLite local y el kernel 0.9 es stdlib-only.
 Estructura: 2 guardas baratas de precondición; el ciclo entero con sus tres
 postcondiciones (IDA · falsador ⊖ · VUELTA operativa); el clavo de que el
 insumo del ⊖ era v7 de verdad; y los del gancho de fase 2 (hallazgo de @infra
-20:31Z): el modo del ancla se DECLARA y no se infiere, el modo oci MIDE la
-identidad del checkout externo contra los blobs del SHA — un directorio que no
-sea el ancla muere antes de tocar al sujeto — y la muerte del extremo
-operativo rotula FALSADA, no no-ejecutable (taxonomía rc de @qa).
+20:31Z): el modo del ancla se DECLARA y no se infiere, la identidad se MIDE
+superficie a superficie — el modo oci contra los blobs del SHA, el modo arbol
+contra los hashes fijados en el código (el manifest vecino no es autoridad) —
+un directorio que no sea el ancla muere antes de tocar al sujeto, y la muerte
+del extremo operativo rotula FALSADA, no no-ejecutable (taxonomía rc de @qa).
+
+El modo arbol corre sobre el fixture bench/ancla-v09: los mismos bytes v0.9
+certificados, fletados por contenido para un checkout público limpio sin la
+historia git del ancla. Los modos git y oci exigen esa historia y sus límites
+declarados quedan intactos.
 """
 from __future__ import annotations
 
 import pathlib
+import shutil
 import sqlite3
 import subprocess
 
@@ -25,18 +32,13 @@ from bench import demo_migracion_rollback as D
 _RAIZ_REPO = pathlib.Path(D.__file__).resolve().parents[1]
 
 
-def _extrae_ancla_en(destino: pathlib.Path) -> None:
-    """Checkout externo byte-idéntico al ancla: los blobs del SHA certificado
-    en el layout que el corredor importa (raíz + tests/journal). Esto prepara
-    código para ejecutarlo en el host, no acredita una extracción de imagen."""
+def _copia_fixture_en(destino: pathlib.Path) -> None:
+    """Copia el fixture del ancla (bench/ancla-v09) con su layout: raíz +
+    tests/journal. Es la fuente de bytes del ancla en un checkout público."""
     for superficie in D.SUPERFICIES_ANCLA:
-        blob = subprocess.run(
-            ["git", "-C", str(_RAIZ_REPO), "show",
-             f"{D.RAIZ_ANCLA_SHA}:{superficie}"],
-            capture_output=True, check=True).stdout
         ruta = destino / superficie
         ruta.parent.mkdir(parents=True, exist_ok=True)
-        ruta.write_bytes(blob)
+        shutil.copyfile(_RAIZ_REPO / D.ANCLA_V09_RUTA / superficie, ruta)
 
 
 def test_worktree_ancla_rechaza_destino_existente(tmp_path):
@@ -58,9 +60,13 @@ def test_la_demo_no_reusa_base_de_evidencia(tmp_path):
 
 def test_ciclo_completo_ida_falsador_y_vuelta_operativa(tmp_path):
     db = tmp_path / "coordination.sqlite"
-    reporte = D.ejecuta_demo(db, worktree_ancla=tmp_path / "ancla",
-                             eventos_v6=2)
+    reporte = D.ejecuta_demo(db, modo_ancla="arbol", eventos_v6=2)
     assert reporte["veredicto"] == "DEMO_OK"
+    # el recibo identifica CADA superficie ejecutada, con el hash medido igual
+    # al fijado en el código
+    assert reporte["ancla_modo"] == "arbol"
+    assert reporte["ancla_ejecucion"] == "fixture_ancla_v09_en_host"
+    assert reporte["ancla_identidad"] == D.ANCLA_V09_SUPERFICIES_SHA256
     # IDA: el kernel 1.0 dejó v7 con la fotografía v6 acreditada y conteos
     assert reporte["ida"]["durable_v"] == 7
     assert reporte["ida"]["fotografia"]["source_durable_v"] == 6
@@ -81,7 +87,7 @@ def test_ciclo_completo_ida_falsador_y_vuelta_operativa(tmp_path):
 
 def test_los_bytes_que_ofrece_el_falsador_son_v7_de_verdad(tmp_path):
     db = tmp_path / "coordination.sqlite"
-    D.ejecuta_demo(db, worktree_ancla=tmp_path / "ancla")
+    D.ejecuta_demo(db, modo_ancla="arbol")
     falsador = db.with_name(db.name + ".v7-para-falsador")
     con = sqlite3.connect(f"file:{falsador}?mode=ro", uri=True)
     try:
@@ -95,8 +101,10 @@ def test_los_bytes_que_ofrece_el_falsador_son_v7_de_verdad(tmp_path):
 
 def test_el_modo_del_ancla_se_declara_y_no_se_infiere(tmp_path):
     """modo_ancla inválido ⇒ rechazo; oci sin ruta ⇒ exige (no recurre al modo
-    git ni crea nada); oci con ruta inexistente ⇒ muere y NO deja nada creado.
-    Un typo en la ruta no puede cambiar de modo en silencio."""
+    git ni crea nada); oci con ruta inexistente ⇒ muere y NO deja nada creado;
+    arbol con --worktree-ancla ⇒ rechazado (corre sobre el fixture de ESTE
+    árbol, nada se redirige en silencio). Un typo en la ruta no puede cambiar
+    de modo en silencio."""
     db = tmp_path / "c.sqlite"
     with pytest.raises(D.DemoNoEjecutable, match="desconocido"):
         D.ejecuta_demo(db, modo_ancla="tar")
@@ -106,50 +114,45 @@ def test_el_modo_del_ancla_se_declara_y_no_se_infiere(tmp_path):
     with pytest.raises(D.DemoNoEjecutable, match="no existe"):
         D.ejecuta_demo(db, worktree_ancla=extraccion, modo_ancla="oci")
     assert not extraccion.exists()
+    ancla = tmp_path / "ancla"
+    with pytest.raises(D.DemoNoEjecutable, match="no acepta"):
+        D.ejecuta_demo(db, worktree_ancla=ancla, modo_ancla="arbol")
+    assert not ancla.exists() and not db.exists()
 
 
 @pytest.mark.parametrize("superficie", D.SUPERFICIES_ANCLA)
-def test_modo_oci_rechaza_un_checkout_que_no_es_el_ancla(tmp_path, superficie):
-    """EL falsador del gancho (hallazgo de @infra): apuntar el modo oci a un
-    directorio que NO sea el ancla debe MORIR, no correr. Vacío ⇒ falta de
-    superficie; contenido impostor ⇒ identidad no verificada. Y murió ANTES
-    de tocar al sujeto: la base no llegó a crearse."""
-    db = tmp_path / "c.sqlite"
+def test_identidad_arbol_rechaza_un_fixture_impostor(tmp_path, superficie):
+    """EL falsador del gancho (hallazgo de @infra), forma arbol: un directorio
+    que NO sea el ancla debe MORIR, no correr. Vacío ⇒ falta de superficie;
+    bytes impostores ⇒ IDENTIDAD DEL ANCLA NO VERIFICADA nombrando la
+    superficie — contra los hashes FIJADOS en el código, no contra el
+    manifest vecino."""
     vacio = tmp_path / "vacio"
     vacio.mkdir()
     with pytest.raises(D.DemoNoEjecutable, match="no trae"):
-        D.ejecuta_demo(db, worktree_ancla=vacio, modo_ancla="oci")
+        D._identidad_ancla_arbol(vacio)
     impostor = tmp_path / "impostor"
-    impostor.mkdir()
-    _extrae_ancla_en(impostor)
+    _copia_fixture_en(impostor)
     (impostor / superficie).write_text("# no es el archivo del ancla\n")
     with pytest.raises(D.DemoNoEjecutable,
                        match="IDENTIDAD DEL ANCLA NO VERIFICADA"):
-        D.ejecuta_demo(db, worktree_ancla=impostor, modo_ancla="oci")
-    assert not db.exists()
+        D._identidad_ancla_arbol(impostor)
 
 
-def test_modo_oci_acepta_un_checkout_byte_identico_al_ancla(tmp_path):
-    """El camino feliz de la fase 2 de @infra: extracción externa = los blobs
-    del SHA. El ciclo COMPLETO corre contra ella, el reporte acredita la
-    identidad medida superficie a superficie, y la extracción externa NO se
-    limpia (no es nuestra)."""
-    db = tmp_path / "c.sqlite"
-    extraccion = tmp_path / "extraccion"
-    extraccion.mkdir()
-    _extrae_ancla_en(extraccion)
-    reporte = D.ejecuta_demo(db, worktree_ancla=extraccion, modo_ancla="oci",
-                             eventos_v6=2)
-    assert reporte["veredicto"] == "DEMO_OK"
-    assert reporte["ancla_modo"] == "oci"
-    assert reporte["ancla_ejecucion"] == "codigo_extraido_en_host"
-    assert reporte["archivo_oci_verificado"] is False
-    assert reporte["extremo_oci_ejecutado"] is False
-    assert reporte["ancla_oci_archivo_sha256"] == D.ANCLA_OCI_ARCHIVO_SHA256
-    assert set(reporte["ancla_identidad"]) == set(D.SUPERFICIES_ANCLA)
-    assert all(len(h) == 64 for h in reporte["ancla_identidad"].values())
-    assert reporte["vuelta"]["ancla_reabrio_y_escribio"] is True
-    assert extraccion.exists()
+def test_el_manifest_del_fixture_no_puede_desviarse_del_codigo(tmp_path):
+    """El manifest vecino NO es la autoridad de la identidad — un fichero
+    modificable por sí solo no prueba procedencia: los hashes FIJADOS en el
+    código mandan. El manifest del fixture debe ser su copia exacta, y un
+    manifest que discrepe (aunque los bytes sean fieles) es un fallo de
+    preparación, no una identidad aceptada."""
+    fixture = _RAIZ_REPO / D.ANCLA_V09_RUTA
+    assert D._lee_manifest_ancla_v09(fixture) == D.ANCLA_V09_SUPERFICIES_SHA256
+    mentiroso = tmp_path / "fixture"
+    shutil.copytree(fixture, mentiroso)
+    (mentiroso / "MANIFEST.sha256").write_text(
+        "0" * 64 + "  coordination.py\n", encoding="utf-8")
+    with pytest.raises(D.DemoNoEjecutable, match="MANIFEST"):
+        D._identidad_ancla_arbol(mentiroso)
 
 
 def test_limpieza_solo_pide_retirar_el_worktree_temporal_propio(tmp_path, monkeypatch):

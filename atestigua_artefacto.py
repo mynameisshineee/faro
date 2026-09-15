@@ -102,6 +102,8 @@ ENTRYPOINTS_RUNNER = ("runtime_root", "projector", "projector_runner")
 
 MODULOS_RUNNER = (
     "coordination.py",
+    "fleet_deadline_runner.py",
+    "kind_registry.py",
     "ledger_parse.py",
     "native_gateway.py",
     "operator_admission.py",

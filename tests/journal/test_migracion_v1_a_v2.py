@@ -219,91 +219,68 @@ def _abre(ruta):
 
 # ── ÉXITO ────────────────────────────────────────────────────────────────────
 
+def _exige_rechazo(ruta, k, *, foto_antes=None, filas=()):
+    """Forma de la RETIRADA, generalizada a `k` (README-falsadores-d83ae04.md; adjudicado por
+    @db-mig 2026-09-11T23:35Z sobre la causa unica que medi: los 8 rojos de este fichero son
+    UN sujeto retirado contado 8 veces, no 8 fallos).
+
+    PRE-ASERTO de reconocimiento —el `k` viaja AQUI, no en la regex del mensaje—, rechazo
+    TIPADO con el motivo de contrato, `0` objetos de v7 escritos, sello intacto y los datos
+    que el test cuida, intactos. Sin el pre-aserto, un sustrato roto daria el mismo rojo que
+    la retirada y el test pasaria por la razon equivocada."""
+    con = _crudo(ruta)
+    assert C._clasificar(con) == ("conocida", k, ""), f"el sustrato dejo de ser una v{k} reconocible"
+    # los objetos que el manifiesto de v7 declara y el de `k` no, PERO que el sustrato YA trae:
+    # contarlos como «escritos por el rechazo» seria culpar al rechazo del fixture (me paso).
+    solo_v7 = set(C.MANIFIESTOS[C.DURABLE_V]["objetos"]) - set(C.MANIFIESTOS[k]["objetos"])
+    ya_estaban = {t for t in solo_v7 if _existe(con, t)}
+    con.close()
+    with pytest.raises(C.MigrationFailed) as e:
+        _abre(ruta).initialize()
+    m = str(e.value)
+    assert "migrador offline" in m and f"durable_v={k}" in m, f"no es el rechazo de la retirada: {m}"
+    con = _crudo(ruta)
+    escritos = sorted(t for t in solo_v7 if _existe(con, t) and t not in ya_estaban)
+    assert escritos == [], f"el rechazo escribio bytes de v{C.DURABLE_V}: {escritos}"
+    assert int(con.execute("SELECT v FROM meta WHERE k='durable_v'").fetchone()[0]) == k, "movio el sello"
+    if foto_antes is not None:
+        assert _foto(con) == foto_antes, "el rechazo toco los datos"
+    for sql, esperado, que in filas:
+        assert con.execute(sql).fetchone()[0] == esperado, f"el rechazo se llevo {que}"
+    con.close()
+
+
 @pytest.mark.parametrize("variante", ["A", "B"])
-def test_la_migracion_preserva_todo_y_deja_la_base_integra(tmp_path, variante):
+def test_una_v1_ya_no_migra_y_NO_PIERDE_NADA(tmp_path, variante):
+    """🔻 antes: `test_la_migracion_preserva_todo_y_deja_la_base_integra`, que aseveraba la
+    migracion 1→actual. El contrato beta la RETIRO («solo admite creacion nueva, v6→v7 o v7»)
+    y @db-mig adjudico (2026-09-11) asertar la RETIRADA sobre los 8 de este fichero.
+
+    HERMANO PENDIENTE (para cuando aterrice el migrador offline): la preservacion que este
+    test media —filas y payloads intactos, rol derivado, atribucion segun variante, las TRES
+    causalidades apuntando a `commands`— se escribe ENTONCES con este mismo fixture."""
     ruta, b, s1, s2, ev, (rc1, rc2) = _fixture_v1(tmp_path, variante)
-    j = _abre(ruta)
-    assert j.stored_durable_v() == 1
-    assert j.initialize() == C.DURABLE_V
-    # Las lecturas de recibo van autenticadas desde M1-4: hace falta sesión viva.
-    sx = j.open_session("cred-A")
-    con = j._connect()
-
-    # ① filas y payloads intactos
-    filas = {r["command_id"]: dict(r) for r in con.execute("SELECT * FROM commands")}
-    assert set(filas) == {"cmd_1", "cmd_2"}
-    assert filas["cmd_1"]["payload"] == '{"n": 1}'
-    assert filas["cmd_2"]["state"] == "accepted"
-
-    # ② rol derivado del principal · ③ atribución según de dónde venga
-    for f in filas.values():
-        assert f["role"] == "be"
-        if variante == "A":
-            assert f["attribution_status"] == "legacy_unattributed"
-            assert f["runtime_instance"] is None      # NO se inventa
-        else:
-            assert f["attribution_status"] == "verified"
-            assert f["runtime_instance"] == s1.runtime_instance
-
-    # ④ las TRES causalidades siguen apuntando a `commands`, no a `commands_v1`
-    assert con.execute("SELECT cause_command_id FROM command_causes WHERE"
-                       " command_id='cmd_2'").fetchone()[0] == "cmd_1"
-    assert con.execute("SELECT cause_event_id FROM command_event_causes WHERE"
-                       " command_id='cmd_2'").fetchone()[0] == ev.event_id
-    assert con.execute("SELECT entry_eid FROM external_causes WHERE"
-                       " child_kind='command' AND child_id='cmd_2'").fetchone()[0] \
-        == "b" * 64
-    for tabla in ("command_causes", "command_event_causes"):
-        sql = con.execute("SELECT sql FROM sqlite_master WHERE name=?",
-                          (tabla,)).fetchone()[0]
-        assert "commands_v1" not in sql, f"{tabla} quedó apuntando al nombre viejo"
-    assert con.execute("PRAGMA foreign_key_check").fetchall() == []
-
-    # ⑤ agregados fusionados SUMANDO, y el recibo sobrante marcado
-    aggs = con.execute("SELECT * FROM denial_aggregates").fetchall()
-    assert len(aggs) == 1 and aggs[0]["suppressed"] == 12      # 7 + 5
-    assert "runtime_instance" not in {c[1] for c in
-                                      con.execute("PRAGMA table_info(denial_aggregates)")}
-    sobrante = [r for r in (rc1, rc2) if r != aggs[0]["receipt_id"]][0]
-    assert con.execute("SELECT current_state FROM receipts WHERE receipt_id=?",
-                       (sobrante,)).fetchone()[0] == "superseded"
-    assert any(t["state"] == "superseded" and "1->2" in (t["detail"] or "")
-               for t in j.transitions(sx.token, sobrante))
-
-    # ⑥ huellas v1 purgadas, con su contador
-    assert con.execute("SELECT COUNT(*) c FROM unknown_credentials").fetchone()["c"] == 0
-    assert con.execute("SELECT v FROM meta WHERE k='fp_v1_purgadas'"
-                       ).fetchone()["v"] == "13"
-
-    # ⑦ FK reactivadas · ⑧ índices de `commands` conservados
-    assert j._connect().execute("PRAGMA foreign_keys").fetchone()[0] == 1
-    idx = {r[1]: r[2] for r in con.execute("PRAGMA index_list(commands)")}
-    assert "i_cmd_ws" in idx
-    assert any(nombre.startswith("sqlite_autoindex") and unico
-               for nombre, unico in idx.items()), idx
-
-    # ⑨ segunda pasada idempotente
-    antes = _foto(con)
-    assert j.initialize() == C.DURABLE_V
-    assert _foto(j._connect()) == antes
-    j.close()
+    foto = _foto(_crudo(ruta))
+    _exige_rechazo(ruta, 1, foto_antes=foto,
+                   filas=(("SELECT COUNT(*) FROM commands", 2, "los commands"),))
 
 
 @pytest.mark.parametrize("variante", ["A", "B"])
-def test_tras_migrar_una_escritura_nueva_nace_verified(tmp_path, variante):
+def test_una_v1_rechazada_NO_ADMITE_ESCRITURA_nueva(tmp_path, variante):
+    """🔻 antes: `test_tras_migrar_una_escritura_nueva_nace_verified`. Sin migracion no hay
+    «tras migrar»: lo que se exige hoy es que el rechazo sea TOTAL — ni escribe v7 ni deja
+    la base a medias para que alguien escriba encima.
+
+    HERMANO PENDIENTE: que una escritura nueva nazca `verified` con su `runtime_instance`,
+    cuando exista el migrador."""
     ruta, b, s1, s2, ev, _ = _fixture_v1(tmp_path, variante)
-    j = _abre(ruta)
-    j.initialize()
-    s = j.open_session("cred-A")
-    cid, estado = j.submit_command(s.token, workstream_id="ws-nuevo", revision=1,
-                                   payload={"ok": True})
-    fila = j._connect().execute("SELECT * FROM commands WHERE command_id=?",
-                                (cid,)).fetchone()
-    assert estado == "accepted"
-    assert fila["attribution_status"] == "verified"
-    assert fila["runtime_instance"] == s.runtime_instance
-    assert fila["role"] == s.role
-    j.close()
+    _exige_rechazo(ruta, 1)
+    # y el falsador de «a medias»: la base queda SIN INICIALIZAR y lo dice con su propio tipo
+    # (`JournalNotInitialized`, no el de la migracion) — medido: el rechazo no la deja a medio
+    # camino ni disfraza el estado. Mi primera version esperaba aqui `MigrationFailed` y el
+    # producto tiene razon: son dos estados distintos y los distingue.
+    with pytest.raises(C.JournalNotInitialized):
+        _abre(ruta).open_session("cred-A")
 
 
 def test_una_base_NUEVA_nace_en_la_version_actual(tmp_path):
@@ -469,154 +446,65 @@ def _fixture_v2(tmp_path):
     return ruta, b, ev
 
 
-def test_de_v2_a_v3_se_migra_conservando_los_datos(tmp_path):
+def test_una_v2_ya_no_migra_y_CONSERVA_SUS_DATOS(tmp_path):
+    """🔻 antes: `test_de_v2_a_v3_se_migra_conservando_los_datos`. Mismo sujeto retirado que
+    la v1, con OTRO sustrato: el rechazo no depende de la version de origen ni del contenido.
+
+    HERMANO PENDIENTE: que la migracion 2→actual conserve la foto y escriba SOLO los pares de
+    la barrera (dos verbos del carril con historia)."""
     ruta, b, ev = _fixture_v2(tmp_path)
-    j = C.Journal(ruta, pepper=PEPPER, lane_ledgers=LANES, recipient_resolver=censo, grammar=GRAMATICA)
-    assert j.stored_durable_v() == 2
-    antes = _foto(_crudo(ruta))
-    assert j.initialize() == C.DURABLE_V
-    con = _crudo(ruta)
-
-    # La migración a v6 SÍ escribe filas, y son las únicas que puede escribir:
-    # los pares `(carril con historia, verbo)` de la barrera, en `closed`. Se
-    # comparan aparte en vez de relajar la igualdad — un `>=` o un `pop()` sin
-    # comprobar dejaría pasar cualquier otra tabla que creciera.
-    despues = _foto(con)
-    barrera = despues.pop("admission_history")
-    assert despues == antes, "la migración perdió o inventó filas"
-    assert barrera == 2, "un carril con historia, sus DOS verbos"
-    assert [tuple(r) for r in con.execute(
-        "SELECT lane, verb, epoch, state, origin, operator, runtime_instance,"
-        " reason_code FROM admission_history ORDER BY verb")] == [
-        ("llminbox", "events.accept", 1, "closed", "migration", None, None,
-         "SCHEMA_MIGRATION"),
-        ("llminbox", "outbox.requeue", 1, "closed", "migration", None, None,
-         "SCHEMA_MIGRATION")]
-    assert "capabilities" in {c[1] for c in
-                              con.execute("PRAGMA table_info(credential_bindings)")}
-    assert "req_hash_v" in {c[1] for c in con.execute("PRAGMA table_info(idempotency)")}
-    # Los defaults dicen la verdad sobre lo ya escrito.
-    assert con.execute("SELECT capabilities FROM credential_bindings"
-                       ).fetchone()[0] == "[]"
-    assert con.execute("SELECT req_hash_v FROM idempotency").fetchone()[0] == 1
-    # El índice parcial de ligadura activa sobrevive (por eso se usa ALTER y no
-    # una reconstrucción: no hay nada que reconstruir).
-    assert "u_binding_activa" in {r[1] for r in
-                                  con.execute("PRAGMA index_list(credential_bindings)")}
-    assert con.execute("PRAGMA foreign_key_check").fetchall() == []
-    assert j.initialize() == C.DURABLE_V                      # idempotente
-    j.close()
+    foto = _foto(_crudo(ruta))
+    _exige_rechazo(ruta, 2, foto_antes=foto,
+                   filas=(("SELECT COUNT(*) FROM events", 1, "el evento de la v2"),))
 
 
-def test_la_ruta_completa_1_a_2_a_3_llega_entera(tmp_path):
-    """Una base v1 tiene que poder subir DOS escalones de una vez: quien lleve
-    tiempo sin actualizar no debería tener que pasar por una versión intermedia
-    que ya no existe en ningún sitio."""
+def test_la_ruta_de_DOS_escalones_se_para_en_el_PRIMERO(tmp_path):
+    """🔻 antes: `test_la_ruta_completa_1_a_2_a_3_llega_entera`. Quien lleve tiempo sin
+    actualizar YA NO sube dos escalones de una vez: se para en el primero, con el motivo
+    escrito y sin tocar nada. Ese es hoy el contrato, y es lo que este test vigila.
+
+    HERMANO PENDIENTE: la ruta entera 1→2→3 con sus columnas nuevas y `foreign_key_check`
+    limpio, cuando el migrador offline exista."""
     ruta, b, s1, s2, ev, _ = _fixture_v1(tmp_path, "A")
-    j = C.Journal(ruta, pepper=PEPPER, lane_ledgers=LANES, recipient_resolver=censo, grammar=GRAMATICA)
-    assert j.stored_durable_v() == 1
-    assert j.initialize() == C.DURABLE_V
-    con = j._connect()
-    cols_cmd = {c[1] for c in con.execute("PRAGMA table_info(commands)")}
-    assert "attribution_status" in cols_cmd                     # paso 1->2
-    assert "capabilities" in {c[1] for c in
-                              con.execute("PRAGMA table_info(credential_bindings)")}
-    assert "req_hash_v" in {c[1] for c in con.execute("PRAGMA table_info(idempotency)")}
-    assert con.execute("SELECT COUNT(*) c FROM commands").fetchone()["c"] == 2
-    assert con.execute("PRAGMA foreign_key_check").fetchall() == []
-    j.close()
+    _exige_rechazo(ruta, 1, filas=(("SELECT COUNT(*) FROM commands", 2, "los commands"),))
+    # ⊖ del «se para en el primero»: NINGUNA columna del escalon 1→2 aparece
+    con = _crudo(ruta)
+    cols = {c[1] for c in con.execute("PRAGMA table_info(commands)")}
+    assert "attribution_status" not in cols, "escribio el escalon 1→2 antes de rechazar"
+    con.close()
 
 
-def test_un_evento_v2_escrito_con_ledger_None_hace_replay_tras_migrar(tmp_path):
-    """El caso que sólo se ve reconstruyendo la fórmula HISTÓRICA.
+def test_la_fila_HISTORICA_del_hash_sobrevive_al_rechazo(tmp_path):
+    """🔻 antes: `test_un_evento_v2_escrito_con_ledger_None_hace_replay_tras_migrar`. Su
+    sujeto —el replay de una fila con la formula HISTORICA del hash— vive DESPUES de migrar,
+    y migrar es lo que se retiro. Lo que si se puede exigir hoy, y es lo que este fichero
+    cuida: que el rechazo NO se lleve por delante justo esa fila.
 
-    En `bcd05c5` el hash se calculaba ANTES de derivar el destino y sobre el
-    `ledger` CRUDO del argumento — que por defecto es `None`. Su fila migra con
-    `req_hash_v=1`. Si al comprobarla usáramos el destino EFECTIVO (`llminbox`),
-    el hash no casaría y el reintento legítimo saldría `409`: castigar a quien
-    reintenta por una migración que él no pidió.
-
-    Los dos brazos del reintento —`ledger=None` y el explícito equivalente—
-    tienen que hacer replay, porque en v1 la fórmula hasheaba `None` y hoy la
-    fila se juzga con SU fórmula.
-    """
-    ruta = str(tmp_path / "coordination.sqlite")
-    intent = {"type": "message", "verb": "inform", "kind": "FYI", "to": ["be"],
-              "head": "h", "body": "cuerpo"}
-    # v2 EXACTO: sin `capabilities` ni `req_hash_v`, y con la fila de
-    # idempotencia calculada como la calculaba aquel binario.
-    j = C.Journal(ruta, pepper=PEPPER, lane_ledgers={"llminbox": ["llminbox"]}, recipient_resolver=censo, grammar=GRAMATICA)
-    j.initialize()
-    abre_admision(j, lanes=["llminbox"])
-    j.bind_credential("cred-A", principal="backend", role="be", lane="llminbox")
-    s = j.open_session("cred-A", ttl_s=10 ** 6)
-    a = j.accept_event(s.token, idempotency_key="k", intent=intent)   # sin ledger
-    con = j._connect()
-    con.execute("PRAGMA foreign_keys=OFF")
-    for tabla, ddl in (("credential_bindings", BINDINGS_V2),
-                       ("idempotency", IDEMPOTENCY_V2)):
-        cols = [c[1] for c in con.execute(f"PRAGMA table_info({tabla})")]
-        comunes = ",".join(c for c in cols
-                           if c not in {"capabilities", "req_hash_v"})
-        con.execute(f"ALTER TABLE {tabla} RENAME TO {tabla}_tmp")
-        con.executescript(ddl)
-        con.execute(f"INSERT INTO {tabla}({comunes}) SELECT {comunes} FROM {tabla}_tmp")
-        con.execute(f"DROP TABLE {tabla}_tmp")
-        if tabla == "credential_bindings":
-            con.execute(IDX_BINDINGS)
-    # El hash TAL Y COMO lo escribía bcd05c5: ledger crudo `None`, sin fence.
-    con.execute("UPDATE idempotency SET req_hash=?",
-                (C._req_hash(1, intent=intent, ledger_raw=None,
-                             ledger_efectivo="llminbox", causes=(),
-                             external_causes=(), fenced_resource=None,
-                             fencing_token=None),))
-    con.execute("DROP TABLE admission_history")   # v2 tampoco la tenía
-    con.execute("INSERT OR REPLACE INTO meta(k,v) VALUES('durable_v','2')")
-    con.execute("PRAGMA foreign_keys=ON")
-    j.close()
-
-    j2 = C.Journal(ruta, pepper=PEPPER, lane_ledgers={"llminbox": ["llminbox"]}, recipient_resolver=censo, grammar=GRAMATICA)
-    assert j2.initialize() == C.DURABLE_V
-    assert j2._connect().execute("SELECT req_hash_v FROM idempotency"
-                                 ).fetchone()[0] == 1
-    s2 = j2.open_session("cred-A", ttl_s=10 ** 6)
-    # ① El reintento en la MISMA forma en que se escribió: replay limpio.
-    b = j2.accept_event(s2.token, idempotency_key="k", intent=intent)
-    assert b.replayed is True and b.event_id == a.event_id
-
-    # ② El equivalente EXPLÍCITO da conflicto, y es lo correcto aunque incomode:
-    #    bajo v1 el ledger se hasheaba CRUDO, así que `None` y `"llminbox"` eran
-    #    dos peticiones distintas de verdad. Ésa era la fisura que v2 cierra, y
-    #    hacer que ahora casen sería REINTERPRETAR una fila histórica —decidir
-    #    hoy lo que aquel binario no decidió— para que salga un número bonito.
-    #    Las filas nuevas ya no tienen el problema: nacen en v2, sobre el destino
-    #    efectivo, y ahí las dos formas coinciden (lo prueba
-    #    `test_el_destino_derivado_y_el_explicito_dan_el_MISMO_hash`).
-    with pytest.raises(C.IdempotencyConflict):
-        j2.accept_event(s2.token, idempotency_key="k", intent=intent,
-                        ledger="llminbox")
-    assert j2._connect().execute("SELECT COUNT(*) c FROM events").fetchone()["c"] == 1
-    # ⊕ y un cuerpo DISTINTO con la misma clave sigue siendo conflicto.
-    with pytest.raises(C.IdempotencyConflict):
-        j2.accept_event(s2.token, idempotency_key="k",
-                        intent={**intent, "body": "otro"})
-    j2.close()
-
-
-def test_una_version_de_hash_DESCONOCIDA_no_se_reinterpreta(tmp_path):
-    """Ni replay ciego ni evento nuevo: se declara que no se puede comprobar."""
+    HERMANO PENDIENTE: el replay con `req_hash_v=1` y el destino CRUDO (`None`), que es el
+    caso que solo se ve reconstruyendo la formula vieja."""
     ruta, b, ev = _fixture_v2(tmp_path)
-    j = C.Journal(ruta, pepper=PEPPER, lane_ledgers=LANES, recipient_resolver=censo, grammar=GRAMATICA)
-    j.initialize()
-    j._connect().execute("UPDATE idempotency SET req_hash_v=99")
-    s = j.open_session("cred-A", ttl_s=10 ** 6)
-    with pytest.raises(C.ReplayUnverifiable):
-        j.accept_event(s.token, idempotency_key="k1",
-                       intent={"type": "message", "verb": "inform", "kind": "FYI",
-                               "to": ["be"], "head": "h", "body": "cuerpo"},
-                       ledger="llminbox")
-    con = j._connect()
-    assert con.execute("SELECT COUNT(*) c FROM events").fetchone()["c"] == 1
-    assert con.execute("SELECT reason FROM denials ORDER BY at DESC LIMIT 1"
-                       ).fetchone()["reason"] == "REPLAY_UNVERIFIABLE"
-    j.close()
+    con = _crudo(ruta)
+    antes = con.execute("SELECT COUNT(*) FROM idempotency").fetchone()[0]
+    con.close()
+    assert antes >= 1, "el sustrato de este test necesita la fila historica"
+    # ⚠️ en la v2 la columna `req_hash_v` NO existe: la añade el escalon 2→3. Por eso la fila
+    # se identifica por su CLAVE, no por una columna que solo nace al migrar (mi primer intento).
+    _exige_rechazo(ruta, 2,
+                   filas=(("SELECT COUNT(*) FROM idempotency", antes,
+                           "la fila con la formula historica"),))
+
+
+def test_una_v2_con_hash_DESCONOCIDO_tampoco_se_reinterpreta(tmp_path):
+    """🔻 antes: `test_una_version_de_hash_DESCONOCIDA_no_se_reinterpreta`. Tambien vivia
+    DESPUES de migrar. La forma de hoy: la base se rechaza ENTERA, asi que no hay
+    reinterpretacion posible — ni ciega ni declarada.
+
+    HERMANO PENDIENTE: `ReplayUnverifiable` + el denial `REPLAY_UNVERIFIABLE` con
+    `req_hash_v=99`, cuando exista el migrador."""
+    ruta, b, ev = _fixture_v2(tmp_path)
+    con = _crudo(ruta)
+    n = con.execute("SELECT COUNT(*) FROM idempotency").fetchone()[0]
+    con.close()
+    # el `req_hash_v=99` del test viejo se ponia DESPUES de migrar; aqui el sustrato es la v2
+    # tal cual, y lo que se exige es que el rechazo no reinterprete —ni toque— su idempotency.
+    _exige_rechazo(ruta, 2, filas=(("SELECT COUNT(*) FROM idempotency", n, "su idempotency"),))

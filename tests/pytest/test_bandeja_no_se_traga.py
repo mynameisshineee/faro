@@ -49,11 +49,12 @@ def test_no_entierra_lo_no_mostrado(tmp_path, monkeypatch):
     s = construir(tmp_path, monkeypatch)
     with TestClient(s.app) as c:
         indexar(s)
-        primera = c.get("/inbox/backend", params={"limit": 1}, headers=H).text
+        params = {"limit": 1, "only": "demo-ledger"}
+        primera = c.get("/inbox/backend", params=params, headers=H).text
         assert "1 de 2 para ti" in primera, "el montaje no reproduce el caso (2 pendientes, 1 mostrada)"
         r = c.post("/inbox/backend/leido", json={"hasta": hasta_de(primera)}, headers=H)
         assert r.status_code == 200
-        segunda = c.get("/inbox/backend", params={"limit": 30}, headers=H).text
+        segunda = c.get("/inbox/backend", params={"limit": 30, "only": "demo-ledger"}, headers=H).text
     assert "(nada nuevo" not in segunda, "la bandeja quedó vacía: se tragó lo que no enseñó"
     assert "para ti" in segunda
 
@@ -65,9 +66,9 @@ def test_drenaje_completo_si_cabe_todo(tmp_path, monkeypatch):
     s = construir(tmp_path, monkeypatch)
     with TestClient(s.app) as c:
         indexar(s)
-        todo = c.get("/inbox/backend", params={"limit": 30}, headers=H).text
+        todo = c.get("/inbox/backend", params={"limit": 30, "only": "demo-ledger"}, headers=H).text
         c.post("/inbox/backend/leido", json={"hasta": hasta_de(todo)}, headers=H)
-        despues = c.get("/inbox/backend", params={"limit": 30}, headers=H).text
+        despues = c.get("/inbox/backend", params={"limit": 30, "only": "demo-ledger"}, headers=H).text
     assert "(nada nuevo" in despues, "mostrándolo todo y drenando, la bandeja debe quedar limpia"
 
 
@@ -87,10 +88,10 @@ def test_la_bandeja_parcial_se_puede_drenar(tmp_path, monkeypatch):
     s = construir(tmp_path, monkeypatch)
     with TestClient(s.app) as c:
         indexar(s)
-        todas = c.get("/inbox/backend", params={"limit": 30}, headers=H).text
+        todas = c.get("/inbox/backend", params={"limit": 30, "only": "demo-ledger"}, headers=H).text
         eids = [x.split()[0] for x in todas.splitlines()
                 if x.startswith("  ") and len(x.split()) > 3 and len(x.split()[0]) == 12]
-        parcial = c.get("/inbox/backend", params={"limit": 1}, headers=H).text
+        parcial = c.get("/inbox/backend", params={"limit": 1, "only": "demo-ledger"}, headers=H).text
         # La que el límite deja fuera: la que estaba y ya no está.
         oculta_eid = next((e for e in eids if e not in parcial), None)
         # ── EL RÓTULO CAMBIÓ PORQUE CAMBIÓ LO QUE HACE EL CÓDIGO ────────────────
@@ -112,9 +113,9 @@ def test_la_bandeja_parcial_se_puede_drenar(tmp_path, monkeypatch):
             "también con «limit=20», que era el fallo señalado")
         # Y siguiendo lo que dice, drena de verdad.
         c.post("/inbox/backend/leido", json={"hasta": hasta_de(parcial)}, headers=H)
-        completo = c.get("/inbox/backend", params={"limit": 2}, headers=H).text
+        completo = c.get("/inbox/backend", params={"limit": 2, "only": "demo-ledger"}, headers=H).text
         c.post("/inbox/backend/leido", json={"hasta": hasta_de(completo)}, headers=H)
-        final = c.get("/inbox/backend", params={"limit": 30}, headers=H).text
+        final = c.get("/inbox/backend", params={"limit": 30, "only": "demo-ledger"}, headers=H).text
     assert "(nada nuevo" in final, "siguiendo la instrucción del rótulo, la bandeja debe vaciarse"
     # Y LA ENTRADA OMITIDA TIENE QUE HABERSE VISTO, no sólo haber desaparecido: sin
     # esto, un arreglo que la BORRARA en vez de mostrarla pasaría el test igual.
