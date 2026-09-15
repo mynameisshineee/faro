@@ -79,7 +79,6 @@ _shared_refs/LEEME.md export-ignore
 BLOQUE-SIGUIENTE-D15.md export-ignore
 CANDIDATO-native-core-db26a32.md export-ignore
 docs/ACK-FOLLOWUP-2026-09-08.md export-ignore
-docs/ADR-002-FLEET-CONTROL-PLANE.md export-ignore
 docs/AGENT-OS-v0.3.md export-ignore
 docs/FLEET-DEADLINES.md export-ignore
 docs/FLEET-MANIFEST-16.md export-ignore
@@ -92,12 +91,10 @@ docs/M2-SCHEMA-V4-INTEGRATION.md export-ignore
 docs/M4-PILOT-ACTIVACION-NATIVA.md export-ignore
 docs/M4-PILOT.md export-ignore
 docs/OPS-INCIDENT-2026-09-07-LIVE-INDEXER.md export-ignore
-docs/SCHEMA-V7-RUNTIME-RECOVERY-CONTRACT.md export-ignore
 docs/V1.0-CLAUDE-FLEET-CONTINUATION-SPEC.md export-ignore
 docs/V1.0-EXECUTION.md export-ignore
 docs/V1.0-GATE-STATUS.md export-ignore
 docs/V1.0-HANDOFF-CHIEF-OF-STAFF.md export-ignore
-docs/V1.0-SCHEMA-V7-MIGRATION.md export-ignore
 FREEZE-native-core-102b404.md export-ignore
 FREEZE-native-core-1f7c9b2.md export-ignore
 FREEZE-native-core-59ad745.md export-ignore
