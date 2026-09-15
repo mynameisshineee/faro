@@ -1,16 +1,9 @@
-"""Supervisión externa de dieciséis procesos propios en dos carriles.
+"""Ensayo operativo de supervisión externa sobre dieciséis procesos propios.
 
-El sujeto es la composición real ``RegistroDeSupervision`` ->
-``CiclosPorVinculo`` -> ``SupervisorPeriodico``. Los dieciséis procesos son
-``Popen`` creados por este test y se registran por su pid y arranque; no hay
-descubrimiento por nombre ni adopción de las sesiones de la flota.
-
-El sensor de existencia es real. Para que la clasificación de recurso sea
-determinista y no dependa de cuánta memoria reserve el runner, el test sólo
-normaliza el RSS de los procesos vivos: dos objetivos reciben una muestra alta,
-los otros catorce una baja. La parada sigue leyendo el proceso real después de
-``kill`` y la recuperación recorre el estado ``resource_degraded`` ->
-``resource_recovered`` del muestreador.
+Los dieciséis procesos son hijos creados por este test y se registran mediante
+su ``pid`` y arranque. El sensor de existencia sigue siendo real; sólo se
+normaliza el RSS de procesos vivos para que la clasificación de recurso sea
+determinista en CI y no dependa de la memoria disponible del runner.
 """
 from __future__ import annotations
 
@@ -34,7 +27,7 @@ UMBRAL_RSS = 1_000
 
 
 class Gateway:
-    """Doble de transporte: registra el lane y la credencial usados."""
+    """Transporte doble que conserva el lane y la credencial usados."""
 
     def __init__(self) -> None:
         self.envios: list[dict] = []
@@ -62,8 +55,7 @@ class Gateway:
                 "replayed": False,
             })
 
-        return T.TransporteSupervisor(
-            f"http://{lane}", token, enviar=enviar)
+        return T.TransporteSupervisor(f"http://{lane}", token, enviar=enviar)
 
 
 def _hijo() -> subprocess.Popen:
@@ -132,7 +124,6 @@ def flota_dieciseis(monkeypatch):
             "fase": fase,
             "registro": registro,
             "gateway": gateway,
-            "ciclos": ciclos,
             "periodico": periodico,
         }
     finally:
@@ -142,7 +133,7 @@ def flota_dieciseis(monkeypatch):
             proceso.wait(timeout=10)
 
 
-def test_dieciseis_procesos_propios_se_observan_por_lane_y_ciclo(
+def test_dieciseis_procesos_propios_se_observan_por_lane_y_recuperan(
         flota_dieciseis):
     f = flota_dieciseis
     registro, gateway = f["registro"], f["gateway"]
@@ -162,8 +153,6 @@ def test_dieciseis_procesos_propios_se_observan_por_lane_y_ciclo(
             if e["kind"] == "resource_degraded"} == {
                 "rti-lane-a-0", "rti-lane-b-0"}
 
-    # El segundo ciclo baja el RSS de los mismos dos objetivos: se acredita
-    # recuperación sólo para una degradación aceptada anteriormente.
     fase["nombre"] = "recupera"
     segunda = periodico.vuelta()
     assert not segunda.hubo_incidencias
@@ -173,20 +162,18 @@ def test_dieciseis_procesos_propios_se_observan_por_lane_y_ciclo(
             if e["kind"] == "resource_recovered"} == {
                 "rti-lane-a-0", "rti-lane-b-0"}
 
-    # Cada objetivo viaja con el token de su propio lane; los nombres lógicos
-    # coincidentes no pueden fusionar credenciales ni secuencias.
     for envio in gateway.envios:
         partes = envio["runtime_instance"].split("-")
-        lane_nombre = "-".join(partes[1:3])
-        assert envio["runtime_instance"].startswith(f"rti-{lane_nombre}-")
-        assert envio["token"] == f"token-{lane_nombre}"
+        lane = "-".join(partes[1:3])
+        assert envio["runtime_instance"].startswith(f"rti-{lane}-")
+        assert envio["token"] == f"token-{lane}"
     assert {e["token"] for e in gateway.envios
             if e["runtime_instance"].startswith("rti-lane-a-")} == {"token-lane-a"}
     assert {e["token"] for e in gateway.envios
             if e["runtime_instance"].startswith("rti-lane-b-")} == {"token-lane-b"}
 
 
-def test_parada_real_de_cuatro_deja_doce_observaciones_exited(
+def test_parada_real_de_cuatro_emite_exited_y_conserva_los_otros(
         flota_dieciseis):
     f = flota_dieciseis
     periodico, gateway = f["periodico"], f["gateway"]
