@@ -103,8 +103,11 @@ docker-compose.pilot.yml
 docker-compose.pilot-estreno.yml
 docker-compose.pilot-native.yml
 docker-compose.pilot-key-init.yml
+docker-compose.pilot-dual.yml
+docker-compose.pilot-dual-estreno.yml
 scripts/m4-pilot.sh
 docs/PILOT-M1-TOPOLOGY.md
+docs/PILOT-V1-DUAL-LANE-TOPOLOGY.md
 scripts/m4-evidencia.sh
 scripts/m4-restore-helper.py
 scripts/m4-rollback.sh
